@@ -8,10 +8,6 @@ import re
 import requests
 import zipfile
 import io
-import threading
-import subprocess
-from flask import Flask, render_template_string, jsonify, request
-from flask_socketio import SocketIO, emit
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 from datetime import datetime
@@ -20,6 +16,8 @@ from pathlib import Path
 import asyncio
 import tempfile
 import shutil
+import threading
+from flask import Flask, jsonify
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler, ChatMemberHandler
 import logging
@@ -31,52 +29,69 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Flask app setup
-app = Flask(__name__)
-app.config['SECRET_KEY'] = 'exu-codex-secret-key'
-socketio = SocketIO(app, cors_allowed_origins="*")
-
 # Bot configuration
 BOT_TOKEN = "8222681776:AAEZoWzGxOc2wXuVKCqQjWwcT6IMxHGMDoM"
 OWNER_ID = 8469461108
 OWNER_USERNAME = "EXUCODER"
 
-# Global variables for bot
+# Flask app for keeping bot alive
+app = Flask(__name__)
+
+# Global variables
 maintenance_mode = False
 force_join_enabled = True
 total_clones = 0
 banned_users = set()
 banned_groups = set()
-user_data = {}
-user_channels = {}
-group_settings = {}
-group_admins = {}
-group_welcome_enabled = {}
-broadcast_data = {}
+user_data = {}  # Store user's cloned files info
+user_channels = {}  # Track which channels users have joined
+group_settings = {}  # Store group-specific settings
+group_admins = {}  # Store group admins who can use bot features
+group_welcome_enabled = {}  # Toggle welcome message per group
+broadcast_data = {}  # Store broadcast media info
+bot_start_time = time.time()
 
-# Global variables for bot process
-bot_thread = None
-bot_running = False
-bot_status = {
-    'running': False,
-    'pid': None,
-    'start_time': None,
-    'uptime': '0s',
-    'total_clones': 0,
-    'total_users': 0,
-    'total_groups': 0,
-    'restart_count': 0
-}
+# Flask routes
+@app.route('/')
+def home():
+    uptime_seconds = int(time.time() - bot_start_time)
+    uptime_string = str(timedelta(seconds=uptime_seconds))
+    
+    return jsonify({
+        'status': 'alive',
+        'bot_name': 'EXU CODEX Bot',
+        'owner': f'@{OWNER_USERNAME}',
+        'uptime': uptime_string,
+        'stats': {
+            'users': len(user_data),
+            'groups': len(group_settings),
+            'banned_users': len(banned_users),
+            'banned_groups': len(banned_groups),
+            'total_clones': total_clones
+        },
+        'maintenance_mode': maintenance_mode,
+        'force_join': force_join_enabled
+    })
 
-# Required channels
-REQUIRED_CHANNELS = [
-    {"username": "@exucoder1", "id": "@exucoder1", "display_name": "𝐄𝐗𝐔 𝐂𝐎𝐃𝐄𝐑"},
-    {"username": "@exulive", "id": "@exulive", "display_name": "𝐄𝐗𝐔 𝐋𝐈𝐕𝐄"},
-    {"username": "@funcodex", "id": "@funcodex", "display_name": "𝐅𝐔𝐍 𝐂𝐎𝐃𝐄𝐗"}
-]
+@app.route('/health')
+def health():
+    return jsonify({'status': 'healthy', 'timestamp': datetime.now().isoformat()})
 
-# Store user sessions
-user_sessions = {}
+@app.route('/stats')
+def stats():
+    return jsonify({
+        'users': len(user_data),
+        'groups': len(group_settings),
+        'banned_users': len(banned_users),
+        'banned_groups': len(banned_groups),
+        'total_clones': total_clones,
+        'channels': len(REQUIRED_CHANNELS)
+    })
+
+def run_flask():
+    """Run Flask app in a separate thread"""
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
 # Font mapping for stylish text
 def style_text(text):
@@ -128,6 +143,8 @@ BUTTONS = {
     'group_unban': style_text("✅ 𝐔𝐧𝐛𝐚𝐧 𝐆𝐫𝐨𝐮𝐩"),
     'group_list': style_text("📋 𝐆𝐫𝐨𝐮𝐩 𝐋𝐢𝐬𝐭"),
     'group_settings': style_text("⚙️ 𝐆𝐫𝐨𝐮𝐩 𝐒𝐞𝐭𝐭𝐢𝐧𝐠𝐬"),
+    'broadcast_confirm': style_text("✅ 𝐂𝐨𝐧𝐟𝐢𝐫𝐦 𝐁𝐫𝐨𝐚𝐝𝐜𝐚𝐬𝐭"),
+    'broadcast_cancel': style_text("❌ 𝐂𝐚𝐧𝐜𝐞𝐥 𝐁𝐫𝐨𝐚𝐝𝐜𝐚𝐬𝐭"),
 }
 
 def create_main_menu_keyboard(is_owner=False):
@@ -196,6 +213,14 @@ def create_files_keyboard(user_id):
     
     keyboard.append([KeyboardButton(BUTTONS['back'])])
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+def create_broadcast_confirm_keyboard():
+    """Create keyboard for broadcast confirmation"""
+    keyboard = [
+        [InlineKeyboardButton(BUTTONS['broadcast_confirm'], callback_data="broadcast_confirm")],
+        [InlineKeyboardButton(BUTTONS['broadcast_cancel'], callback_data="broadcast_cancel")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
 
 class WebsiteCloner:
     def __init__(self):
@@ -298,7 +323,6 @@ class WebsiteCloner:
                             zipf.write(file_path, arcname)
             
             total_clones += 1
-            bot_status['total_clones'] = total_clones
             
             # Store file info for user
             file_info = {
@@ -318,7 +342,6 @@ class WebsiteCloner:
                 user_data[user_id] = []
             
             user_data[user_id].append(file_info)
-            bot_status['total_users'] = len(user_data)
             
             # Keep only last 20 files per user
             if len(user_data[user_id]) > 20:
@@ -479,7 +502,6 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
             'member_count': await chat.get_member_count() if hasattr(chat, 'get_member_count') else 0,
             'welcome_enabled': True
         }
-        bot_status['total_groups'] = len(group_settings)
     
     # Check if user is admin in this group
     try:
@@ -693,6 +715,16 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             await query.edit_message_text(fail_msg, reply_markup=reply_markup)
     
+    elif query.data == "broadcast_confirm" and user_id == OWNER_ID:
+        if user_id in broadcast_data:
+            data = broadcast_data[user_id]
+            await perform_broadcast(update, context, data)
+    
+    elif query.data == "broadcast_cancel" and user_id == OWNER_ID:
+        if user_id in broadcast_data:
+            del broadcast_data[user_id]
+        await query.edit_message_text(f"{style_text('❌ 𝐁𝐫𝐨𝐚𝐝𝐜𝐚𝐬𝐭 𝐜𝐚𝐧𝐜𝐞𝐥𝐥𝐞𝐝')}")
+    
     elif query.data.startswith("download_"):
         index = int(query.data.split("_")[1])
         if user_id in user_data and 0 <= index < len(user_data[user_id][-10:]):
@@ -735,20 +767,177 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=create_files_keyboard(user_id)
             )
 
+async def handle_broadcast_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle broadcast media input"""
+    user = update.effective_user
+    
+    if user.id != OWNER_ID:
+        return
+    
+    if user.id not in user_sessions or user_sessions[user.id] != 'waiting_for_broadcast':
+        return
+    
+    # Store broadcast data
+    broadcast_data[user.id] = {
+        'text': update.message.caption if update.message.caption else (update.message.text if update.message.text else None),
+        'photo': update.message.photo[-1].file_id if update.message.photo else None,
+        'video': update.message.video.file_id if update.message.video else None,
+        'document': update.message.document.file_id if update.message.document else None,
+        'animation': update.message.animation.file_id if update.message.animation else None,
+        'voice': update.message.voice.file_id if update.message.voice else None,
+        'audio': update.message.audio.file_id if update.message.audio else None,
+        'caption': update.message.caption if update.message.caption else None
+    }
+    
+    # Show preview and ask for confirmation
+    await update.message.reply_text(
+        f"{style_text('📢 𝐁𝐫𝐨𝐚𝐝𝐜𝐚𝐬𝐭 𝐏𝐫𝐞𝐯𝐢𝐞𝐰')}\n\n"
+        f"{style_text('𝐏𝐥𝐞𝐚𝐬𝐞 𝐜𝐨𝐧𝐟𝐢𝐫𝐦 𝐭𝐨 𝐬𝐞𝐧𝐝 𝐭𝐨 𝐚𝐥𝐥 𝐮𝐬𝐞𝐫𝐬 𝐚𝐧𝐝 𝐠𝐫𝐨𝐮𝐩𝐬')}\n\n"
+        f"👥 {style_text('𝐔𝐬𝐞𝐫𝐬')}: {len(user_data)}\n"
+        f"👥 {style_text('𝐆𝐫𝐨𝐮𝐩𝐬')}: {len(group_settings)}\n"
+        f"📊 {style_text('𝐓𝐨𝐭𝐚𝐥')}: {len(user_data) + len(group_settings)}",
+        reply_markup=create_broadcast_confirm_keyboard()
+    )
+    
+    # Forward the original message as preview
+    if broadcast_data[user.id]['photo']:
+        await update.message.reply_photo(
+            photo=broadcast_data[user.id]['photo'],
+            caption=broadcast_data[user.id]['caption']
+        )
+    elif broadcast_data[user.id]['video']:
+        await update.message.reply_video(
+            video=broadcast_data[user.id]['video'],
+            caption=broadcast_data[user.id]['caption']
+        )
+    elif broadcast_data[user.id]['document']:
+        await update.message.reply_document(
+            document=broadcast_data[user.id]['document'],
+            caption=broadcast_data[user.id]['caption']
+        )
+    elif broadcast_data[user.id]['animation']:
+        await update.message.reply_animation(
+            animation=broadcast_data[user.id]['animation'],
+            caption=broadcast_data[user.id]['caption']
+        )
+    elif broadcast_data[user.id]['voice']:
+        await update.message.reply_voice(
+            voice=broadcast_data[user.id]['voice'],
+            caption=broadcast_data[user.id]['caption']
+        )
+    elif broadcast_data[user.id]['audio']:
+        await update.message.reply_audio(
+            audio=broadcast_data[user.id]['audio'],
+            caption=broadcast_data[user.id]['caption']
+        )
+    elif broadcast_data[user.id]['text']:
+        await update.message.reply_text(broadcast_data[user.id]['text'])
+    
+    del user_sessions[user.id]
+
+async def perform_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE, data):
+    """Actually perform the broadcast"""
+    query = update.callback_query
+    user_id = query.from_user.id
+    
+    if user_id not in broadcast_data:
+        return
+    
+    success_users = 0
+    failed_users = 0
+    success_groups = 0
+    failed_groups = 0
+    
+    # Send to users
+    all_users = set(user_data.keys())
+    for uid in all_users:
+        try:
+            await send_broadcast_message(context.bot, uid, data)
+            success_users += 1
+            await asyncio.sleep(0.05)
+        except:
+            failed_users += 1
+    
+    # Send to groups (except banned ones)
+    for gid in group_settings.keys():
+        if gid not in banned_groups:
+            try:
+                await send_broadcast_message(context.bot, gid, data)
+                success_groups += 1
+                await asyncio.sleep(0.05)
+            except:
+                failed_groups += 1
+    
+    await query.edit_message_text(
+        f"{style_text('📢 𝐁𝐫𝐨𝐚𝐝𝐜𝐚𝐬𝐭 𝐂𝐨𝐦𝐩𝐥𝐞𝐭𝐞𝐝')}\n\n"
+        f"👤 {style_text('𝐔𝐬𝐞𝐫𝐬')}:\n"
+        f"✅ {style_text('𝐒𝐮𝐜𝐜𝐞𝐬𝐬')}: {success_users}\n"
+        f"❌ {style_text('𝐅𝐚𝐢𝐥𝐞𝐝')}: {failed_users}\n\n"
+        f"👥 {style_text('𝐆𝐫𝐨𝐮𝐩𝐬')}:\n"
+        f"✅ {style_text('𝐒𝐮𝐜𝐜𝐞𝐬𝐬')}: {success_groups}\n"
+        f"❌ {style_text('𝐅𝐚𝐢𝐥𝐞𝐝')}: {failed_groups}\n\n"
+        f"📊 {style_text('𝐓𝐨𝐭𝐚𝐥 𝐒𝐞𝐧𝐭')}: {success_users + success_groups}"
+    )
+    
+    del broadcast_data[user_id]
+
+async def send_broadcast_message(bot, chat_id, data):
+    """Send broadcast message based on type"""
+    if data.get('photo'):
+        await bot.send_photo(
+            chat_id=chat_id,
+            photo=data['photo'],
+            caption=data.get('caption', '')
+        )
+    elif data.get('video'):
+        await bot.send_video(
+            chat_id=chat_id,
+            video=data['video'],
+            caption=data.get('caption', '')
+        )
+    elif data.get('document'):
+        await bot.send_document(
+            chat_id=chat_id,
+            document=data['document'],
+            caption=data.get('caption', '')
+        )
+    elif data.get('animation'):
+        await bot.send_animation(
+            chat_id=chat_id,
+            animation=data['animation'],
+            caption=data.get('caption', '')
+        )
+    elif data.get('voice'):
+        await bot.send_voice(
+            chat_id=chat_id,
+            voice=data['voice'],
+            caption=data.get('caption', '')
+        )
+    elif data.get('audio'):
+        await bot.send_audio(
+            chat_id=chat_id,
+            audio=data['audio'],
+            caption=data.get('caption', '')
+        )
+    elif data.get('text'):
+        await bot.send_message(
+            chat_id=chat_id,
+            text=data['text']
+        )
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle all messages"""
     global maintenance_mode, force_join_enabled
     
     user = update.effective_user
     chat = update.effective_chat
-    text = update.message.text if update.message.text else ""
     
     # Handle group messages first
     if chat.type != 'private':
         await handle_group_message(update, context)
         
         # Don't process further commands in groups unless it's a command
-        if not text.startswith('/'):
+        if update.message and update.message.text and not update.message.text.startswith('/'):
             return
     
     # Private chat logic
@@ -777,253 +966,264 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     cloner = context.chat_data['cloner']
     
-    # Handle button clicks
-    if text == BUTTONS['fetch']:
-        await update.message.reply_text(
-            f"{style_text('🌐 𝐏𝐥𝐞𝐚𝐬𝐞 𝐬𝐞𝐧𝐝 𝐦𝐞 𝐭𝐡𝐞 𝐰𝐞𝐛𝐬𝐢𝐭𝐞 𝐔𝐑𝐋 𝐲𝐨𝐮 𝐰𝐚𝐧𝐭 𝐭𝐨 𝐜𝐥𝐨𝐧𝐞')}\n\n"
-            f"{style_text('𝐄𝐱𝐚𝐦𝐩𝐥𝐞')}: https://example.com"
-        )
-        user_sessions[user.id] = 'waiting_for_url'
-    
-    elif text == BUTTONS['my_files']:
-        if user.id in user_data and user_data[user.id]:
-            msg = f"{style_text('📂 𝐘𝐨𝐮𝐫 𝐬𝐚𝐯𝐞𝐝 𝐰𝐞𝐛𝐬𝐢𝐭𝐞𝐬')}:\n\n"
-            for i, file_info in enumerate(user_data[user.id][-10:]):
-                msg += f"{i+1}. {file_info['name']}\n"
-                msg += f"   📅 {file_info['timestamp'][:10]}\n"
-                msg += f"   📄 HTML | ⚡ JS: {file_info['files']['js']} | 🎨 CSS: {file_info['files']['css']} | 🖼️ Images: {file_info['files']['images']}\n\n"
-            
+    # Handle text messages
+    if update.message and update.message.text:
+        text = update.message.text
+        
+        # Handle button clicks
+        if text == BUTTONS['fetch']:
             await update.message.reply_text(
-                msg,
-                reply_markup=create_files_keyboard(user.id)
+                f"{style_text('🌐 𝐏𝐥𝐞𝐚𝐬𝐞 𝐬𝐞𝐧𝐝 𝐦𝐞 𝐭𝐡𝐞 𝐰𝐞𝐛𝐬𝐢𝐭𝐞 𝐔𝐑𝐋 𝐲𝐨𝐮 𝐰𝐚𝐧𝐭 𝐭𝐨 𝐜𝐥𝐨𝐧𝐞')}\n\n"
+                f"{style_text('𝐄𝐱𝐚𝐦𝐩𝐥𝐞')}: https://example.com"
             )
-        else:
-            await update.message.reply_text(
-                f"{style_text('📂 𝐍𝐨 𝐬𝐚𝐯𝐞𝐝 𝐰𝐞𝐛𝐬𝐢𝐭𝐞𝐬 𝐲𝐞𝐭')}\n\n"
-                f"{style_text('𝐔𝐬𝐞')} {BUTTONS['fetch']} {style_text('𝐭𝐨 𝐜𝐥𝐨𝐧𝐞 𝐚 𝐰𝐞𝐛𝐬𝐢𝐭𝐞')}"
-            )
-    
-    elif text.startswith("📁 "):
-        # Handle file selection from My Files
-        try:
-            index = int(text.split(". ")[0].replace("📁 ", "")) - 1
-            if user.id in user_data and 0 <= index < len(user_data[user.id][-10:]):
-                file_info = user_data[user.id][-10:][index]
-                
-                # Create inline keyboard for file options
-                keyboard = [
-                    [InlineKeyboardButton(BUTTONS['download'], callback_data=f"download_{index}")],
-                    [InlineKeyboardButton(BUTTONS['delete'], callback_data=f"delete_{index}")],
-                    [InlineKeyboardButton("🔙 Back", callback_data="back_to_files")]
-                ]
-                reply_markup = InlineKeyboardMarkup(keyboard)
+            user_sessions[user.id] = 'waiting_for_url'
+        
+        elif text == BUTTONS['my_files']:
+            if user.id in user_data and user_data[user.id]:
+                msg = f"{style_text('📂 𝐘𝐨𝐮𝐫 𝐬𝐚𝐯𝐞𝐝 𝐰𝐞𝐛𝐬𝐢𝐭𝐞𝐬')}:\n\n"
+                for i, file_info in enumerate(user_data[user.id][-10:]):
+                    msg += f"{i+1}. {file_info['name']}\n"
+                    msg += f"   📅 {file_info['timestamp'][:10]}\n"
+                    msg += f"   📄 HTML | ⚡ JS: {file_info['files']['js']} | 🎨 CSS: {file_info['files']['css']} | 🖼️ Images: {file_info['files']['images']}\n\n"
                 
                 await update.message.reply_text(
-                    f"📁 {style_text('𝐅𝐢𝐥𝐞 𝐈𝐧𝐟𝐨')}:\n\n"
-                    f"📌 {style_text('𝐍𝐚𝐦𝐞')}: {file_info['name']}\n"
-                    f"🌐 {style_text('𝐔𝐑𝐋')}: {file_info['url']}\n"
-                    f"📅 {style_text('𝐃𝐚𝐭𝐞')}: {file_info['timestamp']}\n\n"
-                    f"{style_text('𝐂𝐡𝐨𝐨𝐬𝐞 𝐚𝐧 𝐨𝐩𝐭𝐢𝐨𝐧')}:",
-                    reply_markup=reply_markup
+                    msg,
+                    reply_markup=create_files_keyboard(user.id)
                 )
-        except:
-            pass
-    
-    elif text == BUTTONS['help']:
-        help_msg = (
-            f"╔═══《 {style_text('𝐇𝐄𝐋𝐏 𝐌𝐄𝐍𝐔')} 》═══╗\n\n"
-            f"{BUTTONS['fetch']} - {style_text('𝐂𝐥𝐨𝐧𝐞 𝐚 𝐰𝐞𝐛𝐬𝐢𝐭𝐞')}\n"
-            f"{BUTTONS['my_files']} - {style_text('𝐕𝐢𝐞𝐰 𝐬𝐚𝐯𝐞𝐝 𝐟𝐢𝐥𝐞𝐬')}\n"
-            f"{BUTTONS['help']} - {style_text('𝐒𝐡𝐨𝐰 𝐭𝐡𝐢𝐬 𝐦𝐞𝐧𝐮')}\n"
-            f"{BUTTONS['owner']} - {style_text('𝐂𝐨𝐧𝐭𝐚𝐜𝐭 𝐨𝐰𝐧𝐞𝐫')}\n\n"
-            f"{style_text('𝐇𝐨𝐰 𝐭𝐨 𝐮𝐬𝐞')}:\n"
-            f"1. {style_text('𝐂𝐥𝐢𝐜𝐤')} {BUTTONS['fetch']}\n"
-            f"2. {style_text('𝐒𝐞𝐧𝐝 𝐚 𝐔𝐑𝐋')}\n"
-            f"3. {style_text('𝐆𝐞𝐭 𝐙𝐈𝐏 𝐟𝐢𝐥𝐞')}\n"
-            f"4. {style_text('𝐅𝐢𝐥𝐞𝐬 𝐚𝐮𝐭𝐨-𝐬𝐚𝐯𝐞𝐝 𝐢𝐧')} {BUTTONS['my_files']}\n\n"
-            f"{style_text('𝐍𝐨𝐭𝐞')}: {style_text('𝐌𝐚𝐱 𝐟𝐢𝐥𝐞 𝐬𝐢𝐳𝐞 50𝐌𝐁')}\n"
-        )
-        await update.message.reply_text(help_msg)
-    
-    elif text == BUTTONS['owner'] and user.id == OWNER_ID:
-        # Show admin panel for owner
-        admin_msg = (
-            f"╔═══《 {style_text('🛠 𝐀𝐃𝐌𝐈𝐍 𝐏𝐀𝐍𝐄𝐋')} 》═══╗\n\n"
-            f"👑 {style_text('𝐎𝐰𝐧𝐞𝐫')}: @{OWNER_USERNAME}\n"
-            f"🆔 {style_text('𝐈𝐃')}: {OWNER_ID}\n\n"
-            f"╰═══════《 {style_text('𝐀𝐃𝐌𝐈𝐍 𝐌𝐄𝐍𝐔')} 》═══════╝\n\n"
-            f"{style_text('𝐒𝐞𝐥𝐞𝐜𝐭 𝐚𝐧 𝐨𝐩𝐭𝐢𝐨𝐧 𝐛𝐞𝐥𝐨𝐰')}:\n"
-        )
-        await update.message.reply_text(admin_msg, reply_markup=create_admin_panel_keyboard())
-    
-    elif text == BUTTONS['owner']:
-        # Contact owner for normal users
-        await update.message.reply_text(
-            f"╔═══《 {style_text('👑 𝐂𝐎𝐍𝐓𝐀𝐂𝐓 𝐎𝐖𝐍𝐄𝐑')} 》═══╗\n\n"
-            f"📢 {style_text('𝐎𝐰𝐧𝐞𝐫')}: @{OWNER_USERNAME}\n\n"
-            f"{style_text('𝐅𝐨𝐫 𝐚𝐧𝐲 𝐢𝐬𝐬𝐮𝐞𝐬 𝐨𝐫 𝐪𝐮𝐞𝐫𝐢𝐞𝐬')}\n"
-            f"{style_text('𝐏𝐥𝐞𝐚𝐬𝐞 𝐜𝐨𝐧𝐭𝐚𝐜𝐭 𝐭𝐡𝐞 𝐨𝐰𝐧𝐞𝐫')}\n"
-        )
-    
-    elif text == BUTTONS['back']:
-        is_owner = (user.id == OWNER_ID)
-        await update.message.reply_text(
-            style_text('🔙 𝐑𝐞𝐭𝐮𝐫𝐧𝐢𝐧𝐠 𝐭𝐨 𝐦𝐚𝐢𝐧 𝐦𝐞𝐧𝐮'),
-            reply_markup=create_main_menu_keyboard(is_owner)
-        )
-    
-    # Groups button handler
-    elif text == BUTTONS['groups'] and user.id == OWNER_ID:
-        await show_groups_menu(update, context)
-    
-    # Groups submenu handlers
-    elif text == BUTTONS['group_stats'] and user.id == OWNER_ID:
-        await show_all_groups_stats(update, context)
-    
-    elif text == BUTTONS['group_list'] and user.id == OWNER_ID:
-        await show_groups_list(update, context)
-    
-    elif text == BUTTONS['group_ban'] and user.id == OWNER_ID:
-        await update.message.reply_text(
-            f"{style_text('🚫 𝐒𝐞𝐧𝐝 𝐭𝐡𝐞 𝐠𝐫𝐨𝐮𝐩 𝐈𝐃 𝐭𝐨 𝐛𝐚𝐧')}\n"
-            f"{style_text('𝐅𝐨𝐫𝐦𝐚𝐭')}: /bangroup -100123456789"
-        )
-    
-    elif text == BUTTONS['group_unban'] and user.id == OWNER_ID:
-        await update.message.reply_text(
-            f"{style_text('✅ 𝐒𝐞𝐧𝐝 𝐭𝐡𝐞 𝐠𝐫𝐨𝐮𝐩 𝐈𝐃 𝐭𝐨 𝐮𝐧𝐛𝐚𝐧')}\n"
-            f"{style_text('𝐅𝐨𝐫𝐦𝐚𝐭')}: /unbangroup -100123456789"
-        )
-    
-    elif text == BUTTONS['group_settings'] and user.id == OWNER_ID:
-        await show_group_settings_menu(update, context)
-    
-    # Admin panel buttons
-    elif text == BUTTONS['stats'] and user.id == OWNER_ID:
-        total_users = len(user_data)
-        total_files = sum(len(files) for files in user_data.values())
-        total_groups = len(group_settings)
-        banned_groups_count = len(banned_groups)
-        
-        stats_msg = (
-            f"╔═══《 {style_text('📊 𝐁𝐎𝐓 𝐒𝐓𝐀𝐓𝐈𝐒𝐓𝐈𝐂𝐒')} 》═══╗\n\n"
-            f"👥 {style_text('𝐁𝐨𝐭 𝐔𝐬𝐞𝐫𝐬')}: {total_users}\n"
-            f"📁 {style_text('𝐓𝐨𝐭𝐚𝐥 𝐅𝐢𝐥𝐞𝐬')}: {total_files}\n"
-            f"📥 {style_text('𝐓𝐨𝐭𝐚𝐥 𝐂𝐥𝐨𝐧𝐞𝐬')}: {total_clones}\n"
-            f"🚫 {style_text('𝐁𝐚𝐧𝐧𝐞𝐝 𝐔𝐬𝐞𝐫𝐬')}: {len(banned_users)}\n\n"
-            f"📢 {style_text('𝐆𝐫𝐨𝐮𝐩 𝐒𝐭𝐚𝐭𝐬')}:\n"
-            f"   {style_text('𝐓𝐨𝐭𝐚𝐥 𝐆𝐫𝐨𝐮𝐩𝐬')}: {total_groups}\n"
-            f"   {style_text('𝐁𝐚𝐧𝐧𝐞𝐝 𝐆𝐫𝐨𝐮𝐩𝐬')}: {banned_groups_count}\n\n"
-            f"⚙️ {style_text('𝐌𝐚𝐢𝐧𝐭𝐞𝐧𝐚𝐧𝐜𝐞')}: {'𝐎𝐍' if maintenance_mode else '𝐎𝐅𝐅'}\n"
-            f"🔐 {style_text('𝐅𝐨𝐫𝐜𝐞 𝐉𝐨𝐢𝐧')}: {'𝐎𝐍' if force_join_enabled else '𝐎𝐅𝐅'}\n"
-        )
-        await update.message.reply_text(stats_msg)
-    
-    elif text == BUTTONS['broadcast'] and user.id == OWNER_ID:
-        await update.message.reply_text(
-            f"{style_text('📢 𝐒𝐞𝐧𝐝 𝐦𝐞 𝐭𝐡𝐞 𝐦𝐞𝐬𝐬𝐚𝐠𝐞 𝐭𝐨 𝐛𝐫𝐨𝐚𝐝𝐜𝐚𝐬𝐭')}\n"
-            f"{style_text('(𝐓𝐞𝐱𝐭, 𝐢𝐦𝐚𝐠𝐞𝐬, 𝐯𝐢𝐝𝐞𝐨𝐬, 𝐚𝐧𝐲 𝐦𝐞𝐝𝐢𝐚)')}"
-        )
-        user_sessions[user.id] = 'waiting_for_broadcast'
-    
-    elif text == BUTTONS['settings'] and user.id == OWNER_ID:
-        settings_msg = (
-            f"╔═══《 {style_text('⚙️ 𝐁𝐎𝐓 𝐒𝐄𝐓𝐓𝐈𝐍𝐆𝐒')} 》═══╗\n\n"
-            f"📢 {style_text('𝐑𝐞𝐪𝐮𝐢𝐫𝐞𝐝 𝐂𝐡𝐚𝐧𝐧𝐞𝐥𝐬')}: {len(REQUIRED_CHANNELS)}\n"
-        )
-        
-        for channel in REQUIRED_CHANNELS:
-            settings_msg += f"   {channel['display_name']}\n"
-        
-        settings_msg += (
-            f"\n🔐 {style_text('𝐅𝐨𝐫𝐜𝐞 𝐉𝐨𝐢𝐧')}: {'𝐄𝐧𝐚𝐛𝐥𝐞𝐝' if force_join_enabled else '𝐃𝐢𝐬𝐚𝐛𝐥𝐞𝐝'}\n"
-            f"☢️ {style_text('𝐌𝐚𝐢𝐧𝐭𝐞𝐧𝐚𝐧𝐜𝐞')}: {'𝐄𝐧𝐚𝐛𝐥𝐞𝐝' if maintenance_mode else '𝐃𝐢𝐬𝐚𝐛𝐥𝐞𝐝'}\n"
-            f"📁 {style_text('𝐌𝐚𝐱 𝐅𝐢𝐥𝐞𝐬 𝐩𝐞𝐫 𝐔𝐬𝐞𝐫')}: 20\n"
-        )
-        
-        await update.message.reply_text(settings_msg)
-    
-    elif text == BUTTONS['ban_user'] and user.id == OWNER_ID:
-        await update.message.reply_text(
-            f"{style_text('🚫 𝐒𝐞𝐧𝐝 𝐭𝐡𝐞 𝐮𝐬𝐞𝐫 𝐈𝐃 𝐭𝐨 𝐛𝐚𝐧')}\n"
-            f"{style_text('𝐅𝐨𝐫𝐦𝐚𝐭')}: /ban 123456789"
-        )
-    
-    elif text == BUTTONS['maintenance'] and user.id == OWNER_ID:
-        maintenance_mode = not maintenance_mode
-        status = "𝐄𝐧𝐚𝐛𝐥𝐞𝐝" if maintenance_mode else "𝐃𝐢𝐬𝐚𝐛𝐥𝐞𝐝"
-        await update.message.reply_text(
-            f"{style_text(f'☢️ 𝐌𝐚𝐢𝐧𝐭𝐞𝐧𝐚𝐧𝐜𝐞 𝐦𝐨𝐝𝐞 {status}')}"
-        )
-    
-    elif text == BUTTONS['force_join'] and user.id == OWNER_ID:
-        force_join_enabled = not force_join_enabled
-        status = "𝐄𝐧𝐚𝐛𝐥𝐞𝐝" if force_join_enabled else "𝐃𝐢𝐬𝐚𝐛𝐥𝐞𝐝"
-        await update.message.reply_text(
-            f"{style_text(f'🔐 𝐅𝐨𝐫𝐜𝐞 𝐣𝐨𝐢𝐧 {status}')}"
-        )
-    
-    # Handle URL input
-    elif user.id in user_sessions and user_sessions[user.id] == 'waiting_for_url':
-        url = text.strip()
-        await update.message.reply_text(f"{style_text('⏳ 𝐂𝐥𝐨𝐧𝐢𝐧𝐠 𝐰𝐞𝐛𝐬𝐢𝐭𝐞, 𝐩𝐥𝐞𝐚𝐬𝐞 𝐰𝐚𝐢𝐭...')}")
-        
-        try:
-            zip_path, metadata = await cloner.clone_website(url, user.id)
-            
-            with open(zip_path, 'rb') as f:
-                await update.message.reply_document(
-                    document=f,
-                    filename=os.path.basename(zip_path),
-                    caption=(
-                        f"✅ {style_text('𝐖𝐞𝐛𝐬𝐢𝐭𝐞 𝐜𝐥𝐨𝐧𝐞𝐝 𝐬𝐮𝐜𝐜𝐞𝐬𝐬𝐟𝐮𝐥𝐥𝐲!')}\n\n"
-                        f"🌐 {style_text('𝐔𝐑𝐋')}: {url}\n"
-                        f"📄 {style_text('𝐓𝐢𝐭𝐥𝐞')}: {metadata['title'][:50]}\n"
-                        f"⚡ {style_text('𝐉𝐒')}: {metadata['js']} | 🎨 {style_text('𝐂𝐒𝐒')}: {metadata['css']} | 🖼️ {style_text('𝐈𝐦𝐚𝐠𝐞𝐬')}: {metadata['images']}\n\n"
-                        f"📂 {style_text('𝐒𝐚𝐯𝐞𝐝 𝐢𝐧')} {BUTTONS['my_files']}"
-                    )
+            else:
+                await update.message.reply_text(
+                    f"{style_text('📂 𝐍𝐨 𝐬𝐚𝐯𝐞𝐝 𝐰𝐞𝐛𝐬𝐢𝐭𝐞𝐬 𝐲𝐞𝐭')}\n\n"
+                    f"{style_text('𝐔𝐬𝐞')} {BUTTONS['fetch']} {style_text('𝐭𝐨 𝐜𝐥𝐨𝐧𝐞 𝐚 𝐰𝐞𝐛𝐬𝐢𝐭𝐞')}"
                 )
-            
+        
+        elif text.startswith("📁 "):
+            # Handle file selection from My Files
             try:
-                os.remove(zip_path)
-                shutil.rmtree(os.path.dirname(zip_path))
+                index = int(text.split(". ")[0].replace("📁 ", "")) - 1
+                if user.id in user_data and 0 <= index < len(user_data[user.id][-10:]):
+                    file_info = user_data[user.id][-10:][index]
+                    
+                    # Create inline keyboard for file options
+                    keyboard = [
+                        [InlineKeyboardButton(BUTTONS['download'], callback_data=f"download_{index}")],
+                        [InlineKeyboardButton(BUTTONS['delete'], callback_data=f"delete_{index}")],
+                        [InlineKeyboardButton("🔙 Back", callback_data="back_to_files")]
+                    ]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+                    
+                    await update.message.reply_text(
+                        f"📁 {style_text('𝐅𝐢𝐥𝐞 𝐈𝐧𝐟𝐨')}:\n\n"
+                        f"📌 {style_text('𝐍𝐚𝐦𝐞')}: {file_info['name']}\n"
+                        f"🌐 {style_text('𝐔𝐑𝐋')}: {file_info['url']}\n"
+                        f"📅 {style_text('𝐃𝐚𝐭𝐞')}: {file_info['timestamp']}\n\n"
+                        f"{style_text('𝐂𝐡𝐨𝐨𝐬𝐞 𝐚𝐧 𝐨𝐩𝐭𝐢𝐨𝐧')}:",
+                        reply_markup=reply_markup
+                    )
             except:
                 pass
-            
-        except Exception as e:
+        
+        elif text == BUTTONS['help']:
+            help_msg = (
+                f"╔═══《 {style_text('𝐇𝐄𝐋𝐏 𝐌𝐄𝐍𝐔')} 》═══╗\n\n"
+                f"{BUTTONS['fetch']} - {style_text('𝐂𝐥𝐨𝐧𝐞 𝐚 𝐰𝐞𝐛𝐬𝐢𝐭𝐞')}\n"
+                f"{BUTTONS['my_files']} - {style_text('𝐕𝐢𝐞𝐰 𝐬𝐚𝐯𝐞𝐝 𝐟𝐢𝐥𝐞𝐬')}\n"
+                f"{BUTTONS['help']} - {style_text('𝐒𝐡𝐨𝐰 𝐭𝐡𝐢𝐬 𝐦𝐞𝐧𝐮')}\n"
+                f"{BUTTONS['owner']} - {style_text('𝐂𝐨𝐧𝐭𝐚𝐜𝐭 𝐨𝐰𝐧𝐞𝐫')}\n\n"
+                f"{style_text('𝐇𝐨𝐰 𝐭𝐨 𝐮𝐬𝐞')}:\n"
+                f"1. {style_text('𝐂𝐥𝐢𝐜𝐤')} {BUTTONS['fetch']}\n"
+                f"2. {style_text('𝐒𝐞𝐧𝐝 𝐚 𝐔𝐑𝐋')}\n"
+                f"3. {style_text('𝐆𝐞𝐭 𝐙𝐈𝐏 𝐟𝐢𝐥𝐞')}\n"
+                f"4. {style_text('𝐅𝐢𝐥𝐞𝐬 𝐚𝐮𝐭𝐨-𝐬𝐚𝐯𝐞𝐝 𝐢𝐧')} {BUTTONS['my_files']}\n\n"
+                f"{style_text('𝐍𝐨𝐭𝐞')}: {style_text('𝐌𝐚𝐱 𝐟𝐢𝐥𝐞 𝐬𝐢𝐳𝐞 50𝐌𝐁')}\n"
+            )
+            await update.message.reply_text(help_msg)
+        
+        elif text == BUTTONS['owner'] and user.id == OWNER_ID:
+            # Show admin panel for owner
+            admin_msg = (
+                f"╔═══《 {style_text('🛠 𝐀𝐃𝐌𝐈𝐍 𝐏𝐀𝐍𝐄𝐋')} 》═══╗\n\n"
+                f"👑 {style_text('𝐎𝐰𝐧𝐞𝐫')}: @{OWNER_USERNAME}\n"
+                f"🆔 {style_text('𝐈𝐃')}: {OWNER_ID}\n\n"
+                f"╰═══════《 {style_text('𝐀𝐃𝐌𝐈𝐍 𝐌𝐄𝐍𝐔')} 》═══════╝\n\n"
+                f"{style_text('𝐒𝐞𝐥𝐞𝐜𝐭 𝐚𝐧 𝐨𝐩𝐭𝐢𝐨𝐧 𝐛𝐞𝐥𝐨𝐰')}:\n"
+            )
+            await update.message.reply_text(admin_msg, reply_markup=create_admin_panel_keyboard())
+        
+        elif text == BUTTONS['owner']:
+            # Contact owner for normal users
             await update.message.reply_text(
-                f"{style_text('❌ 𝐄𝐫𝐫𝐨𝐫')}: {str(e)}"
+                f"╔═══《 {style_text('👑 𝐂𝐎𝐍𝐓𝐀𝐂𝐓 𝐎𝐖𝐍𝐄𝐑')} 》═══╗\n\n"
+                f"📢 {style_text('𝐎𝐰𝐧𝐞𝐫')}: @{OWNER_USERNAME}\n\n"
+                f"{style_text('𝐅𝐨𝐫 𝐚𝐧𝐲 𝐢𝐬𝐬𝐮𝐞𝐬 𝐨𝐫 𝐪𝐮𝐞𝐫𝐢𝐞𝐬')}\n"
+                f"{style_text('𝐏𝐥𝐞𝐚𝐬𝐞 𝐜𝐨𝐧𝐭𝐚𝐜𝐭 𝐭𝐡𝐞 𝐨𝐰𝐧𝐞𝐫')}\n"
             )
         
-        del user_sessions[user.id]
+        elif text == BUTTONS['back']:
+            is_owner = (user.id == OWNER_ID)
+            await update.message.reply_text(
+                style_text('🔙 𝐑𝐞𝐭𝐮𝐫𝐧𝐢𝐧𝐠 𝐭𝐨 𝐦𝐚𝐢𝐧 𝐦𝐞𝐧𝐮'),
+                reply_markup=create_main_menu_keyboard(is_owner)
+            )
+        
+        # Groups button handler
+        elif text == BUTTONS['groups'] and user.id == OWNER_ID:
+            await show_groups_menu(update, context)
+        
+        # Groups submenu handlers
+        elif text == BUTTONS['group_stats'] and user.id == OWNER_ID:
+            await show_all_groups_stats(update, context)
+        
+        elif text == BUTTONS['group_list'] and user.id == OWNER_ID:
+            await show_groups_list(update, context)
+        
+        elif text == BUTTONS['group_ban'] and user.id == OWNER_ID:
+            await update.message.reply_text(
+                f"{style_text('🚫 𝐒𝐞𝐧𝐝 𝐭𝐡𝐞 𝐠𝐫𝐨𝐮𝐩 𝐈𝐃 𝐭𝐨 𝐛𝐚𝐧')}\n"
+                f"{style_text('𝐅𝐨𝐫𝐦𝐚𝐭')}: /bangroup -100123456789"
+            )
+        
+        elif text == BUTTONS['group_unban'] and user.id == OWNER_ID:
+            await update.message.reply_text(
+                f"{style_text('✅ 𝐒𝐞𝐧𝐝 𝐭𝐡𝐞 𝐠𝐫𝐨𝐮𝐩 𝐈𝐃 𝐭𝐨 𝐮𝐧𝐛𝐚𝐧')}\n"
+                f"{style_text('𝐅𝐨𝐫𝐦𝐚𝐭')}: /unbangroup -100123456789"
+            )
+        
+        elif text == BUTTONS['group_settings'] and user.id == OWNER_ID:
+            await show_group_settings_menu(update, context)
+        
+        # Admin panel buttons
+        elif text == BUTTONS['stats'] and user.id == OWNER_ID:
+            total_users = len(user_data)
+            total_files = sum(len(files) for files in user_data.values())
+            total_groups = len(group_settings)
+            banned_groups_count = len(banned_groups)
+            
+            # Get channel join statistics
+            total_channel_members = {}
+            for channel in REQUIRED_CHANNELS:
+                try:
+                    chat_info = await context.bot.get_chat(chat_id=channel['id'])
+                    total_channel_members[channel['display_name']] = await chat_info.get_member_count()
+                except:
+                    total_channel_members[channel['display_name']] = 'N/A'
+            
+            stats_msg = (
+                f"╔═══《 {style_text('📊 𝐁𝐎𝐓 𝐒𝐓𝐀𝐓𝐈𝐒𝐓𝐈𝐂𝐒')} 》═══╗\n\n"
+                f"👥 {style_text('𝐁𝐨𝐭 𝐔𝐬𝐞𝐫𝐬')}: {total_users}\n"
+                f"📁 {style_text('𝐓𝐨𝐭𝐚𝐥 𝐅𝐢𝐥𝐞𝐬')}: {total_files}\n"
+                f"📥 {style_text('𝐓𝐨𝐭𝐚𝐥 𝐂𝐥𝐨𝐧𝐞𝐬')}: {total_clones}\n"
+                f"🚫 {style_text('𝐁𝐚𝐧𝐧𝐞𝐝 𝐔𝐬𝐞𝐫𝐬')}: {len(banned_users)}\n\n"
+                f"📢 {style_text('𝐆𝐫𝐨𝐮𝐩 𝐒𝐭𝐚𝐭𝐬')}:\n"
+                f"   {style_text('𝐓𝐨𝐭𝐚𝐥 𝐆𝐫𝐨𝐮𝐩𝐬')}: {total_groups}\n"
+                f"   {style_text('𝐁𝐚𝐧𝐧𝐞𝐝 𝐆𝐫𝐨𝐮𝐩𝐬')}: {banned_groups_count}\n\n"
+                f"📢 {style_text('𝐂𝐡𝐚𝐧𝐧𝐞𝐥 𝐒𝐭𝐚𝐭𝐬')}:\n"
+            )
+            
+            for channel in REQUIRED_CHANNELS:
+                stats_msg += f"   {channel['display_name']}: {total_channel_members.get(channel['display_name'], 'N/A')} members\n"
+            
+            stats_msg += (
+                f"\n⚙️ {style_text('𝐌𝐚𝐢𝐧𝐭𝐞𝐧𝐚𝐧𝐜𝐞')}: {'𝐎𝐍' if maintenance_mode else '𝐎𝐅𝐅'}\n"
+                f"🔐 {style_text('𝐅𝐨𝐫𝐜𝐞 𝐉𝐨𝐢𝐧')}: {'𝐎𝐍' if force_join_enabled else '𝐎𝐅𝐅'}\n"
+            )
+            
+            await update.message.reply_text(stats_msg)
+        
+        elif text == BUTTONS['broadcast'] and user.id == OWNER_ID:
+            await update.message.reply_text(
+                f"{style_text('📢 𝐒𝐞𝐧𝐝 𝐦𝐞 𝐭𝐡𝐞 𝐦𝐞𝐝𝐢𝐚 𝐨𝐫 𝐭𝐞𝐱𝐭 𝐭𝐨 𝐛𝐫𝐨𝐚𝐝𝐜𝐚𝐬𝐭')}\n\n"
+                f"{style_text('𝐒𝐮𝐩𝐩𝐨𝐫𝐭𝐞𝐝 𝐟𝐨𝐫𝐦𝐚𝐭𝐬')}:\n"
+                f"• {style_text('𝐓𝐞𝐱𝐭 𝐦𝐞𝐬𝐬𝐚𝐠𝐞𝐬')}\n"
+                f"• {style_text('𝐏𝐡𝐨𝐭𝐨𝐬 𝐰𝐢𝐭𝐡 𝐜𝐚𝐩𝐭𝐢𝐨𝐧')}\n"
+                f"• {style_text('𝐕𝐢𝐝𝐞𝐨𝐬 𝐰𝐢𝐭𝐡 𝐜𝐚𝐩𝐭𝐢𝐨𝐧')}\n"
+                f"• {style_text('𝐃𝐨𝐜𝐮𝐦𝐞𝐧𝐭𝐬')}\n"
+                f"• {style_text('𝐀𝐧𝐢𝐦𝐚𝐭𝐢𝐨𝐧𝐬 (𝐆𝐈𝐅)')}\n"
+                f"• {style_text('𝐕𝐨𝐢𝐜𝐞 𝐦𝐞𝐬𝐬𝐚𝐠𝐞𝐬')}\n"
+                f"• {style_text('𝐀𝐮𝐝𝐢𝐨 𝐟𝐢𝐥𝐞𝐬')}\n\n"
+                f"{style_text('𝐓𝐡𝐢𝐬 𝐰𝐢𝐥𝐥 𝐛𝐞 𝐬𝐞𝐧𝐭 𝐭𝐨')} {len(user_data)} {style_text('𝐮𝐬𝐞𝐫𝐬')} {style_text('𝐚𝐧𝐝')} {len(group_settings)} {style_text('𝐠𝐫𝐨𝐮𝐩𝐬')}"
+            )
+            user_sessions[user.id] = 'waiting_for_broadcast'
+        
+        elif text == BUTTONS['settings'] and user.id == OWNER_ID:
+            settings_msg = (
+                f"╔═══《 {style_text('⚙️ 𝐁𝐎𝐓 𝐒𝐄𝐓𝐓𝐈𝐍𝐆𝐒')} 》═══╗\n\n"
+                f"📢 {style_text('𝐑𝐞𝐪𝐮𝐢𝐫𝐞𝐝 𝐂𝐡𝐚𝐧𝐧𝐞𝐥𝐬')}: {len(REQUIRED_CHANNELS)}\n"
+            )
+            
+            for channel in REQUIRED_CHANNELS:
+                settings_msg += f"   {channel['display_name']}\n"
+            
+            settings_msg += (
+                f"\n🔐 {style_text('𝐅𝐨𝐫𝐜𝐞 𝐉𝐨𝐢𝐧')}: {'𝐄𝐧𝐚𝐛𝐥𝐞𝐝' if force_join_enabled else '𝐃𝐢𝐬𝐚𝐛𝐥𝐞𝐝'}\n"
+                f"☢️ {style_text('𝐌𝐚𝐢𝐧𝐭𝐞𝐧𝐚𝐧𝐜𝐞')}: {'𝐄𝐧𝐚𝐛𝐥𝐞𝐝' if maintenance_mode else '𝐃𝐢𝐬𝐚𝐛𝐥𝐞𝐝'}\n"
+                f"📁 {style_text('𝐌𝐚𝐱 𝐅𝐢𝐥𝐞𝐬 𝐩𝐞𝐫 𝐔𝐬𝐞𝐫')}: 20\n"
+                f"👥 {style_text('𝐆𝐫𝐨𝐮𝐩 𝐖𝐞𝐥𝐜𝐨𝐦𝐞')}: {'𝐄𝐧𝐚𝐛𝐥𝐞𝐝 𝐛𝐲 𝐝𝐞𝐟𝐚𝐮𝐥𝐭'}\n"
+            )
+            
+            await update.message.reply_text(settings_msg)
+        
+        elif text == BUTTONS['ban_user'] and user.id == OWNER_ID:
+            await update.message.reply_text(
+                f"{style_text('🚫 𝐒𝐞𝐧𝐝 𝐭𝐡𝐞 𝐮𝐬𝐞𝐫 𝐈𝐃 𝐭𝐨 𝐛𝐚𝐧')}\n"
+                f"{style_text('𝐅𝐨𝐫𝐦𝐚𝐭')}: /ban 123456789"
+            )
+        
+        elif text == BUTTONS['maintenance'] and user.id == OWNER_ID:
+            maintenance_mode = not maintenance_mode
+            status = "𝐄𝐧𝐚𝐛𝐥𝐞𝐝" if maintenance_mode else "𝐃𝐢𝐬𝐚𝐛𝐥𝐞𝐝"
+            await update.message.reply_text(
+                f"{style_text(f'☢️ 𝐌𝐚𝐢𝐧𝐭𝐞𝐧𝐚𝐧𝐜𝐞 𝐦𝐨𝐝𝐞 {status}')}"
+            )
+        
+        elif text == BUTTONS['force_join'] and user.id == OWNER_ID:
+            force_join_enabled = not force_join_enabled
+            status = "𝐄𝐧𝐚𝐛𝐥𝐞𝐝" if force_join_enabled else "𝐃𝐢𝐬𝐚𝐛𝐥𝐞𝐝"
+            await update.message.reply_text(
+                f"{style_text(f'🔐 𝐅𝐨𝐫𝐜𝐞 𝐣𝐨𝐢𝐧 {status}')}"
+            )
+        
+        # Handle URL input
+        elif user.id in user_sessions and user_sessions[user.id] == 'waiting_for_url':
+            url = text.strip()
+            status_msg = await update.message.reply_text(
+                f"{style_text('⏳ 𝐂𝐥𝐨𝐧𝐢𝐧𝐠 𝐰𝐞𝐛𝐬𝐢𝐭𝐞, 𝐩𝐥𝐞𝐚𝐬𝐞 𝐰𝐚𝐢𝐭...')}\n"
+                f"{style_text('🌐 𝐔𝐑𝐋')}: {url}"
+            )
+            
+            try:
+                zip_path, metadata = await cloner.clone_website(url, user.id)
+                
+                # Send zip file
+                with open(zip_path, 'rb') as f:
+                    await update.message.reply_document(
+                        document=f,
+                        filename=os.path.basename(zip_path),
+                        caption=(
+                            f"✅ {style_text('𝐖𝐞𝐛𝐬𝐢𝐭𝐞 𝐜𝐥𝐨𝐧𝐞𝐝 𝐬𝐮𝐜𝐜𝐞𝐬𝐬𝐟𝐮𝐥𝐥𝐲!')}\n\n"
+                            f"🌐 {style_text('𝐔𝐑𝐋')}: {url}\n"
+                            f"📄 {style_text('𝐓𝐢𝐭𝐥𝐞')}: {metadata['title'][:50]}\n"
+                            f"⚡ {style_text('𝐉𝐒')}: {metadata['js']} | 🎨 {style_text('𝐂𝐒𝐒')}: {metadata['css']} | 🖼️ {style_text('𝐈𝐦𝐚𝐠𝐞𝐬')}: {metadata['images']}\n\n"
+                            f"📂 {style_text('𝐒𝐚𝐯𝐞𝐝 𝐢𝐧')} {BUTTONS['my_files']}"
+                        )
+                    )
+                
+                # Clean up temp file after sending
+                try:
+                    os.remove(zip_path)
+                    shutil.rmtree(os.path.dirname(zip_path))
+                except:
+                    pass
+                
+            except Exception as e:
+                await update.message.reply_text(
+                    f"{style_text('❌ 𝐄𝐫𝐫𝐨𝐫')}: {str(e)}"
+                )
+            
+            del user_sessions[user.id]
     
-    # Handle broadcast message with media
+    # Handle non-text messages (media) for broadcast
     elif user.id in user_sessions and user_sessions[user.id] == 'waiting_for_broadcast' and user.id == OWNER_ID:
-        broadcast_data[user.id] = {
-            'text': text if text else None,
-            'photo': None,
-            'video': None,
-            'document': None
-        }
-        
-        # Check if message has media
-        if update.message.photo:
-            broadcast_data[user.id]['photo'] = update.message.photo[-1].file_id
-        elif update.message.video:
-            broadcast_data[user.id]['video'] = update.message.video.file_id
-        elif update.message.document:
-            broadcast_data[user.id]['document'] = update.message.document.file_id
-        
-        # Confirm broadcast
-        keyboard = [
-            [InlineKeyboardButton("✅ Confirm Broadcast", callback_data="confirm_broadcast")],
-            [InlineKeyboardButton("❌ Cancel", callback_data="cancel_broadcast")]
-        ]
-        await update.message.reply_text(
-            f"{style_text('📢 Ready to broadcast?')}\n\n"
-            f"{style_text('This will send to all users and groups.')}",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        await handle_broadcast_input(update, context)
 
 async def show_groups_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show groups management menu"""
@@ -1069,9 +1269,10 @@ async def show_groups_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
         status = "🚫 𝐁𝐀𝐍𝐍𝐄𝐃" if gid in banned_groups else "✅ 𝐀𝐂𝐓𝐈𝐕𝐄"
         msg += f"📢 {settings['title']}\n"
         msg += f"🆔 `{gid}`\n"
-        msg += f"📊 {status}\n\n"
+        msg += f"📊 {status}\n"
+        msg += f"👥 {style_text('𝐌𝐞𝐦𝐛𝐞𝐫𝐬')}: {settings.get('member_count', 'N/A')}\n\n"
         
-        if len(msg) > 3500:
+        if len(msg) > 3500:  # Telegram message limit
             msg += f"... {style_text('𝐚𝐧𝐝 𝐦𝐨𝐫𝐞')}"
             break
     
@@ -1104,6 +1305,7 @@ async def ban_group_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         group_id = int(context.args[0])
         banned_groups.add(group_id)
         
+        # Try to get group name
         group_name = "Unknown"
         if group_id in group_settings:
             group_name = group_settings[group_id]['title']
@@ -1128,6 +1330,7 @@ async def unban_group_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         if group_id in banned_groups:
             banned_groups.remove(group_id)
             
+            # Try to get group name
             group_name = "Unknown"
             if group_id in group_settings:
                 group_name = group_settings[group_id]['title']
@@ -1183,434 +1386,44 @@ async def unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{style_text('❌ 𝐈𝐧𝐯𝐚𝐥𝐢𝐝 𝐮𝐬𝐞𝐫 𝐈𝐃')}"
         )
 
-# Flask Routes
-@app.route('/')
-def index():
-    """Render the dashboard"""
-    return render_template_string(HTML_TEMPLATE, owner_username=OWNER_USERNAME, owner_id=OWNER_ID)
+def main():
+    """Start the bot and Flask server"""
+    # Start Flask in a separate thread
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    
+    # Create application
+    application = Application.builder().token(BOT_TOKEN).build()
+    
+    # Add handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("ban", ban_command))
+    application.add_handler(CommandHandler("unban", unban_command))
+    application.add_handler(CommandHandler("bangroup", ban_group_command))
+    application.add_handler(CommandHandler("unbangroup", unban_group_command))
+    application.add_handler(CommandHandler("id", handle_group_message))
+    application.add_handler(CommandHandler("chatid", handle_group_message))
+    application.add_handler(CommandHandler("togglewelcome", handle_group_message))
+    application.add_handler(CommandHandler("groupstats", handle_group_message))
+    application.add_handler(ChatMemberHandler(handle_channel_member_update, ChatMemberHandler.CHAT_MEMBER))
+    application.add_handler(CallbackQueryHandler(handle_callback))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.Document.ALL | filters.ANIMATION | filters.VOICE | filters.AUDIO, handle_message))
+    application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_chat_members))
+    
+    # Start bot
+    print(f"{style_text('🤖 𝐄𝐗𝐔 𝐂𝐎𝐃𝐄𝐗 𝐁𝐨𝐭 𝐢𝐬 𝐬𝐭𝐚𝐫𝐭𝐢𝐧𝐠...')}")
+    print(f"{style_text('👑 𝐎𝐰𝐧𝐞𝐫')}: @{OWNER_USERNAME}")
+    print(f"{style_text('📢 𝐑𝐞𝐪𝐮𝐢𝐫𝐞𝐝 𝐂𝐡𝐚𝐧𝐧𝐞𝐥𝐬')}:")
+    for channel in REQUIRED_CHANNELS:
+        print(f"   {channel['display_name']} (@{channel['username'][1:]})")
+    print(f"{style_text('👥 𝐆𝐫𝐨𝐮𝐩 𝐌𝐨𝐝𝐞')}: {style_text('𝐀𝐜𝐭𝐢𝐯𝐞')}")
+    print(f"{style_text('🌐 𝐅𝐥𝐚𝐬𝐤 𝐒𝐞𝐫𝐯𝐞𝐫')}: {style_text('𝐑𝐮𝐧𝐧𝐢𝐧𝐠 𝐨𝐧 𝐩𝐨𝐫𝐭 8080')}")
+    
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-@app.route('/api/bot/status')
-def bot_status_api():
-    """Get bot status"""
-    return jsonify(bot_status)
-
-@app.route('/api/bot/start', methods=['POST'])
-def start_bot():
-    """Start the bot in a thread"""
-    global bot_thread, bot_running, bot_status
-    
-    if bot_running:
-        return jsonify({'success': False, 'message': 'Bot already running'})
-    
-    def run_bot():
-        global bot_running, bot_status
-        try:
-            bot_status['running'] = True
-            bot_status['start_time'] = datetime.now().isoformat()
-            bot_status['restart_count'] += 1
-            
-            # Create application
-            application = Application.builder().token(BOT_TOKEN).build()
-            
-            # Add handlers
-            application.add_handler(CommandHandler("start", start))
-            application.add_handler(CommandHandler("ban", ban_command))
-            application.add_handler(CommandHandler("unban", unban_command))
-            application.add_handler(CommandHandler("bangroup", ban_group_command))
-            application.add_handler(CommandHandler("unbangroup", unban_group_command))
-            application.add_handler(ChatMemberHandler(handle_channel_member_update, ChatMemberHandler.CHAT_MEMBER))
-            application.add_handler(CallbackQueryHandler(handle_callback))
-            application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-            application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_chat_members))
-            
-            # Start bot
-            print(f"✅ Bot started! @{OWNER_USERNAME}")
-            socketio.emit('terminal_output', {'output': f'Bot started at {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'})
-            application.run_polling(allowed_updates=Update.ALL_TYPES)
-            
-        except Exception as e:
-            print(f"Bot error: {e}")
-            socketio.emit('terminal_output', {'output': f'Bot error: {e}'})
-        finally:
-            bot_running = False
-            bot_status['running'] = False
-    
-    bot_thread = threading.Thread(target=run_bot, daemon=True)
-    bot_thread.start()
-    bot_running = True
-    
-    return jsonify({'success': True, 'message': 'Bot started'})
-
-@app.route('/api/bot/stop', methods=['POST'])
-def stop_bot():
-    """Stop the bot"""
-    global bot_running, bot_status
-    
-    bot_running = False
-    bot_status['running'] = False
-    socketio.emit('terminal_output', {'output': f'Bot stopped at {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'})
-    
-    # Force exit the bot thread (this is a simplification)
-    os._exit(0)
-    
-    return jsonify({'success': True, 'message': 'Bot stopped'})
-
-@app.route('/api/bot/restart', methods=['POST'])
-def restart_bot():
-    """Restart the bot"""
-    stop_bot()
-    time.sleep(2)
-    return start_bot()
-
-# HTML Dashboard Template
-HTML_TEMPLATE = '''
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>EXU CODEX Bot Dashboard</title>
-    <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
-        
-        body {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            padding: 20px;
-        }
-        
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-        }
-        
-        .header {
-            background: rgba(255, 255, 255, 0.95);
-            border-radius: 20px;
-            padding: 30px;
-            margin-bottom: 30px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
-            text-align: center;
-        }
-        
-        .header h1 {
-            font-size: 2.5em;
-            color: #333;
-            margin-bottom: 10px;
-        }
-        
-        .header h1 span {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-        
-        .status-badge {
-            display: inline-block;
-            padding: 10px 20px;
-            border-radius: 25px;
-            font-weight: bold;
-            margin: 10px 0;
-        }
-        
-        .status-running {
-            background: #10b981;
-            color: white;
-        }
-        
-        .status-stopped {
-            background: #ef4444;
-            color: white;
-        }
-        
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
-        }
-        
-        .stat-card {
-            background: rgba(255, 255, 255, 0.95);
-            border-radius: 15px;
-            padding: 25px;
-            box-shadow: 0 5px 20px rgba(0,0,0,0.1);
-            text-align: center;
-        }
-        
-        .stat-card h3 {
-            color: #666;
-            font-size: 1em;
-            margin-bottom: 10px;
-        }
-        
-        .stat-card .value {
-            font-size: 2.5em;
-            font-weight: bold;
-            color: #333;
-        }
-        
-        .control-panel {
-            background: rgba(255, 255, 255, 0.95);
-            border-radius: 15px;
-            padding: 30px;
-            margin-bottom: 30px;
-            box-shadow: 0 5px 20px rgba(0,0,0,0.1);
-            text-align: center;
-        }
-        
-        .btn {
-            padding: 15px 30px;
-            border: none;
-            border-radius: 10px;
-            font-size: 1.1em;
-            font-weight: bold;
-            cursor: pointer;
-            margin: 0 10px;
-            transition: all 0.3s;
-        }
-        
-        .btn-start {
-            background: #10b981;
-            color: white;
-        }
-        
-        .btn-start:hover {
-            background: #059669;
-        }
-        
-        .btn-stop {
-            background: #ef4444;
-            color: white;
-        }
-        
-        .btn-stop:hover {
-            background: #dc2626;
-        }
-        
-        .btn-restart {
-            background: #f59e0b;
-            color: white;
-        }
-        
-        .btn-restart:hover {
-            background: #d97706;
-        }
-        
-        .info-section {
-            background: rgba(255, 255, 255, 0.95);
-            border-radius: 15px;
-            padding: 20px;
-            margin-bottom: 20px;
-        }
-        
-        .channel-list {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-            margin-top: 10px;
-        }
-        
-        .channel-badge {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 8px 15px;
-            border-radius: 20px;
-            font-size: 0.9em;
-        }
-        
-        .terminal {
-            background: #1a1a1a;
-            border-radius: 15px;
-            padding: 20px;
-            color: #00ff00;
-            font-family: 'Courier New', monospace;
-            height: 300px;
-            overflow-y: auto;
-            margin-top: 20px;
-        }
-        
-        .terminal-line {
-            margin: 5px 0;
-            white-space: pre-wrap;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>🤖 <span>EXU CODEX</span> Bot Dashboard</h1>
-            <p>Owner: @{{ owner_username }} | ID: {{ owner_id }}</p>
-            <div id="statusBadge" class="status-badge status-stopped">⚫ Bot Stopped</div>
-        </div>
-        
-        <div class="stats-grid">
-            <div class="stat-card">
-                <h3>📊 Status</h3>
-                <div class="value" id="botStatus">Stopped</div>
-            </div>
-            <div class="stat-card">
-                <h3>⏰ Uptime</h3>
-                <div class="value" id="uptime">0s</div>
-            </div>
-            <div class="stat-card">
-                <h3>👥 Users</h3>
-                <div class="value" id="totalUsers">0</div>
-            </div>
-            <div class="stat-card">
-                <h3>📢 Groups</h3>
-                <div class="value" id="totalGroups">0</div>
-            </div>
-            <div class="stat-card">
-                <h3>📥 Clones</h3>
-                <div class="value" id="totalClones">0</div>
-            </div>
-            <div class="stat-card">
-                <h3>🔄 Restarts</h3>
-                <div class="value" id="restartCount">0</div>
-            </div>
-        </div>
-        
-        <div class="control-panel">
-            <h2>🎮 Bot Controls</h2>
-            <button class="btn btn-start" onclick="startBot()">▶️ Start Bot</button>
-            <button class="btn btn-stop" onclick="stopBot()">⏹️ Stop Bot</button>
-            <button class="btn btn-restart" onclick="restartBot()">🔄 Restart Bot</button>
-        </div>
-        
-        <div class="info-section">
-            <h3>📢 Required Channels</h3>
-            <div class="channel-list">
-                <span class="channel-badge">𝐄𝐗𝐔 𝐂𝐎𝐃𝐄𝐑</span>
-                <span class="channel-badge">𝐄𝐗𝐔 𝐋𝐈𝐕𝐄</span>
-                <span class="channel-badge">𝐅𝐔𝐍 𝐂𝐎𝐃𝐄𝐗</span>
-            </div>
-        </div>
-        
-        <div class="terminal" id="terminal">
-            <div class="terminal-line">$ EXU CODEX Terminal v1.0</div>
-            <div class="terminal-line">$ System ready. Click Start to launch bot...</div>
-        </div>
-    </div>
-    
-    <script>
-        const socket = io();
-        
-        socket.on('connect', function() {
-            console.log('Connected to dashboard');
-            addTerminalLine('Connected to dashboard');
-        });
-        
-        socket.on('terminal_output', function(data) {
-            addTerminalLine(data.output);
-        });
-        
-        socket.on('status_update', function(data) {
-            updateDashboard(data);
-        });
-        
-        function updateDashboard(data) {
-            const statusBadge = document.getElementById('statusBadge');
-            if (data.running) {
-                statusBadge.className = 'status-badge status-running';
-                statusBadge.innerHTML = '🟢 Bot Running';
-                document.getElementById('botStatus').innerText = 'Running';
-            } else {
-                statusBadge.className = 'status-badge status-stopped';
-                statusBadge.innerHTML = '⚫ Bot Stopped';
-                document.getElementById('botStatus').innerText = 'Stopped';
-            }
-            
-            document.getElementById('uptime').innerText = data.uptime;
-            document.getElementById('totalUsers').innerText = data.total_users;
-            document.getElementById('totalGroups').innerText = data.total_groups;
-            document.getElementById('totalClones').innerText = data.total_clones;
-            document.getElementById('restartCount').innerText = data.restart_count;
-        }
-        
-        function addTerminalLine(text) {
-            const terminal = document.getElementById('terminal');
-            const line = document.createElement('div');
-            line.className = 'terminal-line';
-            line.textContent = '$ ' + text;
-            terminal.appendChild(line);
-            terminal.scrollTop = terminal.scrollHeight;
-        }
-        
-        function startBot() {
-            addTerminalLine('Starting bot...');
-            fetch('/api/bot/start', { method: 'POST' })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        addTerminalLine('✅ ' + data.message);
-                    } else {
-                        addTerminalLine('❌ ' + data.message);
-                    }
-                });
-        }
-        
-        function stopBot() {
-            addTerminalLine('Stopping bot...');
-            fetch('/api/bot/stop', { method: 'POST' })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        addTerminalLine('⏹️ ' + data.message);
-                    } else {
-                        addTerminalLine('❌ ' + data.message);
-                    }
-                });
-        }
-        
-        function restartBot() {
-            addTerminalLine('Restarting bot...');
-            fetch('/api/bot/restart', { method: 'POST' })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        addTerminalLine('🔄 ' + data.message);
-                    } else {
-                        addTerminalLine('❌ ' + data.message);
-                    }
-                });
-        }
-        
-        // Update stats every 3 seconds
-        setInterval(() => {
-            fetch('/api/bot/status')
-                .then(response => response.json())
-                .then(data => updateDashboard(data));
-        }, 3000);
-    </script>
-</body>
-</html>
-'''
-
-def update_stats():
-    """Update bot statistics for dashboard"""
-    while True:
-        if bot_status['running'] and bot_status['start_time']:
-            uptime = datetime.now() - datetime.fromisoformat(bot_status['start_time'])
-            bot_status['uptime'] = str(uptime).split('.')[0]
-        
-        bot_status['total_users'] = len(user_data)
-        bot_status['total_groups'] = len(group_settings)
-        bot_status['total_clones'] = total_clones
-        
-        socketio.emit('status_update', bot_status)
-        time.sleep(2)
+# Required for some hosting platforms
+from datetime import timedelta
 
 if __name__ == '__main__':
-    # Start stats update thread
-    threading.Thread(target=update_stats, daemon=True).start()
-    
-    # Run Flask app
-    print("🌐 Web Dashboard available at http://localhost:5000")
-    socketio.run(app, host='0.0.0.0', port=5000, debug=False, allow_unsafe_werkzeug=True)
+    main()
