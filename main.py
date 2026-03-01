@@ -8,6 +8,10 @@ import re
 import requests
 import zipfile
 import io
+import threading
+import subprocess
+from flask import Flask, render_template_string, jsonify, request
+from flask_socketio import SocketIO, emit
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 from datetime import datetime
@@ -27,24 +31,44 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Flask app setup
+app = Flask(__name__)
+app.config['SECRET_KEY'] = 'exu-codex-secret-key'
+socketio = SocketIO(app, cors_allowed_origins="*")
+
 # Bot configuration
 BOT_TOKEN = "8222681776:AAEZoWzGxOc2wXuVKCqQjWwcT6IMxHGMDoM"
 OWNER_ID = 8469461108
 OWNER_USERNAME = "EXUCODER"
 
-# Global variables
+# Global variables for bot
 maintenance_mode = False
 force_join_enabled = True
 total_clones = 0
 banned_users = set()
 banned_groups = set()
-user_data = {}  # Store user's cloned files info
-user_channels = {}  # Track which channels users have joined
-group_settings = {}  # Store group-specific settings
-group_admins = {}  # Store group admins who can use bot features
-group_welcome_enabled = {}  # Toggle welcome message per group
+user_data = {}
+user_channels = {}
+group_settings = {}
+group_admins = {}
+group_welcome_enabled = {}
+broadcast_data = {}
 
-# Required channels with display names (what users SEE)
+# Global variables for bot process
+bot_thread = None
+bot_running = False
+bot_status = {
+    'running': False,
+    'pid': None,
+    'start_time': None,
+    'uptime': '0s',
+    'total_clones': 0,
+    'total_users': 0,
+    'total_groups': 0,
+    'restart_count': 0
+}
+
+# Required channels
 REQUIRED_CHANNELS = [
     {"username": "@exucoder1", "id": "@exucoder1", "display_name": "𝐄𝐗𝐔 𝐂𝐎𝐃𝐄𝐑"},
     {"username": "@exulive", "id": "@exulive", "display_name": "𝐄𝐗𝐔 𝐋𝐈𝐕𝐄"},
@@ -98,7 +122,7 @@ BUTTONS = {
     'download': style_text("📥 𝐃𝐨𝐰𝐧𝐥𝐨𝐚𝐝"),
     'delete': style_text("🗑️ 𝐃𝐞𝐥𝐞𝐭𝐞"),
     'refresh': style_text("🔄 𝐑𝐞𝐟𝐫𝐞𝐬𝐡"),
-    'groups': style_text("📢 𝐆𝐫𝐨𝐮𝐩𝐬"),  # New Groups button
+    'groups': style_text("📢 𝐆𝐫𝐨𝐮𝐩𝐬"),
     'group_stats': style_text("📊 𝐆𝐫𝐨𝐮𝐩 𝐒𝐭𝐚𝐭𝐬"),
     'group_ban': style_text("🚫 𝐁𝐚𝐧 𝐆𝐫𝐨𝐮𝐩"),
     'group_unban': style_text("✅ 𝐔𝐧𝐛𝐚𝐧 𝐆𝐫𝐨𝐮𝐩"),
@@ -134,7 +158,7 @@ def create_admin_panel_keyboard():
         # Row 3: Maintenance and Force Join
         [KeyboardButton(BUTTONS['maintenance']), KeyboardButton(BUTTONS['force_join'])],
         
-        # Row 4: Groups button (NEW)
+        # Row 4: Groups button
         [KeyboardButton(BUTTONS['groups'])],
         
         # Row 5: Back button
@@ -274,6 +298,7 @@ class WebsiteCloner:
                             zipf.write(file_path, arcname)
             
             total_clones += 1
+            bot_status['total_clones'] = total_clones
             
             # Store file info for user
             file_info = {
@@ -293,6 +318,7 @@ class WebsiteCloner:
                 user_data[user_id] = []
             
             user_data[user_id].append(file_info)
+            bot_status['total_users'] = len(user_data)
             
             # Keep only last 20 files per user
             if len(user_data[user_id]) > 20:
@@ -453,6 +479,7 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
             'member_count': await chat.get_member_count() if hasattr(chat, 'get_member_count') else 0,
             'welcome_enabled': True
         }
+        bot_status['total_groups'] = len(group_settings)
     
     # Check if user is admin in this group
     try:
@@ -558,7 +585,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_group_message(update, context)
         return
     
-    # Private chat logic (existing)
+    # Private chat logic
     # Check if user is banned
     if user.id in banned_users:
         await update.message.reply_text(f"{style_text('❌ 𝐘𝐨𝐮 𝐚𝐫𝐞 𝐛𝐚𝐧𝐧𝐞𝐝 𝐟𝐫𝐨𝐦 𝐮𝐬𝐢𝐧𝐠 𝐭𝐡𝐢𝐬 𝐛𝐨𝐭')}")
@@ -714,7 +741,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     user = update.effective_user
     chat = update.effective_chat
-    text = update.message.text
+    text = update.message.text if update.message.text else ""
     
     # Handle group messages first
     if chat.type != 'private':
@@ -724,7 +751,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not text.startswith('/'):
             return
     
-    # Private chat logic (existing)
+    # Private chat logic
     # Check if user is banned
     if user.id in banned_users:
         await update.message.reply_text(f"{style_text('❌ 𝐘𝐨𝐮 𝐚𝐫𝐞 𝐛𝐚𝐧𝐧𝐞𝐝 𝐟𝐫𝐨𝐦 𝐮𝐬𝐢𝐧𝐠 𝐭𝐡𝐢𝐬 𝐛𝐨𝐭')}")
@@ -871,21 +898,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == BUTTONS['group_settings'] and user.id == OWNER_ID:
         await show_group_settings_menu(update, context)
     
-    # Admin panel buttons (existing)
+    # Admin panel buttons
     elif text == BUTTONS['stats'] and user.id == OWNER_ID:
         total_users = len(user_data)
         total_files = sum(len(files) for files in user_data.values())
         total_groups = len(group_settings)
         banned_groups_count = len(banned_groups)
-        
-        # Get channel join statistics
-        total_channel_members = {}
-        for channel in REQUIRED_CHANNELS:
-            try:
-                chat = await context.bot.get_chat(chat_id=channel['id'])
-                total_channel_members[channel['display_name']] = chat.get_member_count()
-            except:
-                total_channel_members[channel['display_name']] = 'N/A'
         
         stats_msg = (
             f"╔═══《 {style_text('📊 𝐁𝐎𝐓 𝐒𝐓𝐀𝐓𝐈𝐒𝐓𝐈𝐂𝐒')} 》═══╗\n\n"
@@ -896,23 +914,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📢 {style_text('𝐆𝐫𝐨𝐮𝐩 𝐒𝐭𝐚𝐭𝐬')}:\n"
             f"   {style_text('𝐓𝐨𝐭𝐚𝐥 𝐆𝐫𝐨𝐮𝐩𝐬')}: {total_groups}\n"
             f"   {style_text('𝐁𝐚𝐧𝐧𝐞𝐝 𝐆𝐫𝐨𝐮𝐩𝐬')}: {banned_groups_count}\n\n"
-            f"📢 {style_text('𝐂𝐡𝐚𝐧𝐧𝐞𝐥 𝐒𝐭𝐚𝐭𝐬')}:\n"
-        )
-        
-        for channel in REQUIRED_CHANNELS:
-            stats_msg += f"   {channel['display_name']}: {total_channel_members.get(channel['display_name'], 'N/A')} members\n"
-        
-        stats_msg += (
-            f"\n⚙️ {style_text('𝐌𝐚𝐢𝐧𝐭𝐞𝐧𝐚𝐧𝐜𝐞')}: {'𝐎𝐍' if maintenance_mode else '𝐎𝐅𝐅'}\n"
+            f"⚙️ {style_text('𝐌𝐚𝐢𝐧𝐭𝐞𝐧𝐚𝐧𝐜𝐞')}: {'𝐎𝐍' if maintenance_mode else '𝐎𝐅𝐅'}\n"
             f"🔐 {style_text('𝐅𝐨𝐫𝐜𝐞 𝐉𝐨𝐢𝐧')}: {'𝐎𝐍' if force_join_enabled else '𝐎𝐅𝐅'}\n"
         )
-        
         await update.message.reply_text(stats_msg)
     
     elif text == BUTTONS['broadcast'] and user.id == OWNER_ID:
         await update.message.reply_text(
             f"{style_text('📢 𝐒𝐞𝐧𝐝 𝐦𝐞 𝐭𝐡𝐞 𝐦𝐞𝐬𝐬𝐚𝐠𝐞 𝐭𝐨 𝐛𝐫𝐨𝐚𝐝𝐜𝐚𝐬𝐭')}\n"
-            f"{style_text('𝐓𝐨 𝐚𝐥𝐥 𝐛𝐨𝐭 𝐮𝐬𝐞𝐫𝐬 𝐚𝐧𝐝 𝐠𝐫𝐨𝐮𝐩𝐬')}"
+            f"{style_text('(𝐓𝐞𝐱𝐭, 𝐢𝐦𝐚𝐠𝐞𝐬, 𝐯𝐢𝐝𝐞𝐨𝐬, 𝐚𝐧𝐲 𝐦𝐞𝐝𝐢𝐚)')}"
         )
         user_sessions[user.id] = 'waiting_for_broadcast'
     
@@ -929,7 +939,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"\n🔐 {style_text('𝐅𝐨𝐫𝐜𝐞 𝐉𝐨𝐢𝐧')}: {'𝐄𝐧𝐚𝐛𝐥𝐞𝐝' if force_join_enabled else '𝐃𝐢𝐬𝐚𝐛𝐥𝐞𝐝'}\n"
             f"☢️ {style_text('𝐌𝐚𝐢𝐧𝐭𝐞𝐧𝐚𝐧𝐜𝐞')}: {'𝐄𝐧𝐚𝐛𝐥𝐞𝐝' if maintenance_mode else '𝐃𝐢𝐬𝐚𝐛𝐥𝐞𝐝'}\n"
             f"📁 {style_text('𝐌𝐚𝐱 𝐅𝐢𝐥𝐞𝐬 𝐩𝐞𝐫 𝐔𝐬𝐞𝐫')}: 20\n"
-            f"👥 {style_text('𝐆𝐫𝐨𝐮𝐩 𝐖𝐞𝐥𝐜𝐨𝐦𝐞')}: {'𝐄𝐧𝐚𝐛𝐥𝐞𝐝 𝐛𝐲 𝐝𝐞𝐟𝐚𝐮𝐥𝐭'}\n"
         )
         
         await update.message.reply_text(settings_msg)
@@ -957,15 +966,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Handle URL input
     elif user.id in user_sessions and user_sessions[user.id] == 'waiting_for_url':
         url = text.strip()
-        status_msg = await update.message.reply_text(
-            f"{style_text('⏳ 𝐂𝐥𝐨𝐧𝐢𝐧𝐠 𝐰𝐞𝐛𝐬𝐢𝐭𝐞, 𝐩𝐥𝐞𝐚𝐬𝐞 𝐰𝐚𝐢𝐭...')}\n"
-            f"{style_text('🌐 𝐔𝐑𝐋')}: {url}"
-        )
+        await update.message.reply_text(f"{style_text('⏳ 𝐂𝐥𝐨𝐧𝐢𝐧𝐠 𝐰𝐞𝐛𝐬𝐢𝐭𝐞, 𝐩𝐥𝐞𝐚𝐬𝐞 𝐰𝐚𝐢𝐭...')}")
         
         try:
             zip_path, metadata = await cloner.clone_website(url, user.id)
             
-            # Send zip file
             with open(zip_path, 'rb') as f:
                 await update.message.reply_document(
                     document=f,
@@ -979,7 +984,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                 )
             
-            # Clean up temp file after sending
             try:
                 os.remove(zip_path)
                 shutil.rmtree(os.path.dirname(zip_path))
@@ -993,45 +997,33 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         del user_sessions[user.id]
     
-    # Handle broadcast message
+    # Handle broadcast message with media
     elif user.id in user_sessions and user_sessions[user.id] == 'waiting_for_broadcast' and user.id == OWNER_ID:
-        broadcast_msg = text
-        success_users = 0
-        failed_users = 0
-        success_groups = 0
-        failed_groups = 0
+        broadcast_data[user.id] = {
+            'text': text if text else None,
+            'photo': None,
+            'video': None,
+            'document': None
+        }
         
-        # Broadcast to users
-        all_users = set(user_data.keys())
-        for uid in all_users:
-            try:
-                await context.bot.send_message(chat_id=uid, text=broadcast_msg)
-                success_users += 1
-                await asyncio.sleep(0.05)
-            except:
-                failed_users += 1
+        # Check if message has media
+        if update.message.photo:
+            broadcast_data[user.id]['photo'] = update.message.photo[-1].file_id
+        elif update.message.video:
+            broadcast_data[user.id]['video'] = update.message.video.file_id
+        elif update.message.document:
+            broadcast_data[user.id]['document'] = update.message.document.file_id
         
-        # Broadcast to groups (except banned ones)
-        for gid in group_settings.keys():
-            if gid not in banned_groups:
-                try:
-                    await context.bot.send_message(chat_id=gid, text=broadcast_msg)
-                    success_groups += 1
-                    await asyncio.sleep(0.05)
-                except:
-                    failed_groups += 1
-        
+        # Confirm broadcast
+        keyboard = [
+            [InlineKeyboardButton("✅ Confirm Broadcast", callback_data="confirm_broadcast")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="cancel_broadcast")]
+        ]
         await update.message.reply_text(
-            f"{style_text('📢 𝐁𝐫𝐨𝐚𝐝𝐜𝐚𝐬𝐭 𝐂𝐨𝐦𝐩𝐥𝐞𝐭𝐞')}\n\n"
-            f"👤 {style_text('𝐔𝐬𝐞𝐫𝐬')}:\n"
-            f"✅ {style_text('𝐒𝐮𝐜𝐜𝐞𝐬𝐬')}: {success_users}\n"
-            f"❌ {style_text('𝐅𝐚𝐢𝐥𝐞𝐝')}: {failed_users}\n\n"
-            f"👥 {style_text('𝐆𝐫𝐨𝐮𝐩𝐬')}:\n"
-            f"✅ {style_text('𝐒𝐮𝐜𝐜𝐞𝐬𝐬')}: {success_groups}\n"
-            f"❌ {style_text('𝐅𝐚𝐢𝐥𝐞𝐝')}: {failed_groups}"
+            f"{style_text('📢 Ready to broadcast?')}\n\n"
+            f"{style_text('This will send to all users and groups.')}",
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
-        
-        del user_sessions[user.id]
 
 async def show_groups_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show groups management menu"""
@@ -1077,10 +1069,9 @@ async def show_groups_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
         status = "🚫 𝐁𝐀𝐍𝐍𝐄𝐃" if gid in banned_groups else "✅ 𝐀𝐂𝐓𝐈𝐕𝐄"
         msg += f"📢 {settings['title']}\n"
         msg += f"🆔 `{gid}`\n"
-        msg += f"📊 {status}\n"
-        msg += f"👥 {style_text('𝐌𝐞𝐦𝐛𝐞𝐫𝐬')}: {settings.get('member_count', 'N/A')}\n\n"
+        msg += f"📊 {status}\n\n"
         
-        if len(msg) > 3500:  # Telegram message limit
+        if len(msg) > 3500:
             msg += f"... {style_text('𝐚𝐧𝐝 𝐦𝐨𝐫𝐞')}"
             break
     
@@ -1113,7 +1104,6 @@ async def ban_group_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         group_id = int(context.args[0])
         banned_groups.add(group_id)
         
-        # Try to get group name
         group_name = "Unknown"
         if group_id in group_settings:
             group_name = group_settings[group_id]['title']
@@ -1138,7 +1128,6 @@ async def unban_group_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         if group_id in banned_groups:
             banned_groups.remove(group_id)
             
-            # Try to get group name
             group_name = "Unknown"
             if group_id in group_settings:
                 group_name = group_settings[group_id]['title']
@@ -1194,34 +1183,434 @@ async def unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{style_text('❌ 𝐈𝐧𝐯𝐚𝐥𝐢𝐝 𝐮𝐬𝐞𝐫 𝐈𝐃')}"
         )
 
-def main():
-    """Start the bot"""
-    # Create application
-    application = Application.builder().token(BOT_TOKEN).build()
+# Flask Routes
+@app.route('/')
+def index():
+    """Render the dashboard"""
+    return render_template_string(HTML_TEMPLATE, owner_username=OWNER_USERNAME, owner_id=OWNER_ID)
+
+@app.route('/api/bot/status')
+def bot_status_api():
+    """Get bot status"""
+    return jsonify(bot_status)
+
+@app.route('/api/bot/start', methods=['POST'])
+def start_bot():
+    """Start the bot in a thread"""
+    global bot_thread, bot_running, bot_status
     
-    # Add handlers
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("ban", ban_command))
-    application.add_handler(CommandHandler("unban", unban_command))
-    application.add_handler(CommandHandler("bangroup", ban_group_command))
-    application.add_handler(CommandHandler("unbangroup", unban_group_command))
-    application.add_handler(CommandHandler("id", handle_group_message))
-    application.add_handler(CommandHandler("chatid", handle_group_message))
-    application.add_handler(CommandHandler("togglewelcome", handle_group_message))
-    application.add_handler(CommandHandler("groupstats", handle_group_message))
-    application.add_handler(ChatMemberHandler(handle_channel_member_update, ChatMemberHandler.CHAT_MEMBER))
-    application.add_handler(CallbackQueryHandler(handle_callback))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_chat_members))
+    if bot_running:
+        return jsonify({'success': False, 'message': 'Bot already running'})
     
-    # Start bot
-    print(f"{style_text('🤖 𝐄𝐗𝐔 𝐂𝐎𝐃𝐄𝐗 𝐁𝐨𝐭 𝐢𝐬 𝐬𝐭𝐚𝐫𝐭𝐢𝐧𝐠...')}")
-    print(f"{style_text('👑 𝐎𝐰𝐧𝐞𝐫')}: @{OWNER_USERNAME}")
-    print(f"{style_text('📢 𝐑𝐞𝐪𝐮𝐢𝐫𝐞𝐝 𝐂𝐡𝐚𝐧𝐧𝐞𝐥𝐬')}:")
-    for channel in REQUIRED_CHANNELS:
-        print(f"   {channel['display_name']} (@{channel['username'][1:]})")
-    print(f"{style_text('👥 𝐆𝐫𝐨𝐮𝐩 𝐌𝐨𝐝𝐞')}: {style_text('𝐀𝐜𝐭𝐢𝐯𝐞')}")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    def run_bot():
+        global bot_running, bot_status
+        try:
+            bot_status['running'] = True
+            bot_status['start_time'] = datetime.now().isoformat()
+            bot_status['restart_count'] += 1
+            
+            # Create application
+            application = Application.builder().token(BOT_TOKEN).build()
+            
+            # Add handlers
+            application.add_handler(CommandHandler("start", start))
+            application.add_handler(CommandHandler("ban", ban_command))
+            application.add_handler(CommandHandler("unban", unban_command))
+            application.add_handler(CommandHandler("bangroup", ban_group_command))
+            application.add_handler(CommandHandler("unbangroup", unban_group_command))
+            application.add_handler(ChatMemberHandler(handle_channel_member_update, ChatMemberHandler.CHAT_MEMBER))
+            application.add_handler(CallbackQueryHandler(handle_callback))
+            application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+            application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_chat_members))
+            
+            # Start bot
+            print(f"✅ Bot started! @{OWNER_USERNAME}")
+            socketio.emit('terminal_output', {'output': f'Bot started at {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'})
+            application.run_polling(allowed_updates=Update.ALL_TYPES)
+            
+        except Exception as e:
+            print(f"Bot error: {e}")
+            socketio.emit('terminal_output', {'output': f'Bot error: {e}'})
+        finally:
+            bot_running = False
+            bot_status['running'] = False
+    
+    bot_thread = threading.Thread(target=run_bot, daemon=True)
+    bot_thread.start()
+    bot_running = True
+    
+    return jsonify({'success': True, 'message': 'Bot started'})
+
+@app.route('/api/bot/stop', methods=['POST'])
+def stop_bot():
+    """Stop the bot"""
+    global bot_running, bot_status
+    
+    bot_running = False
+    bot_status['running'] = False
+    socketio.emit('terminal_output', {'output': f'Bot stopped at {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'})
+    
+    # Force exit the bot thread (this is a simplification)
+    os._exit(0)
+    
+    return jsonify({'success': True, 'message': 'Bot stopped'})
+
+@app.route('/api/bot/restart', methods=['POST'])
+def restart_bot():
+    """Restart the bot"""
+    stop_bot()
+    time.sleep(2)
+    return start_bot()
+
+# HTML Dashboard Template
+HTML_TEMPLATE = '''
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EXU CODEX Bot Dashboard</title>
+    <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2.5em;
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        .header h1 span {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .status-badge {
+            display: inline-block;
+            padding: 10px 20px;
+            border-radius: 25px;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        
+        .status-running {
+            background: #10b981;
+            color: white;
+        }
+        
+        .status-stopped {
+            background: #ef4444;
+            color: white;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .stat-card {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        
+        .stat-card h3 {
+            color: #666;
+            font-size: 1em;
+            margin-bottom: 10px;
+        }
+        
+        .stat-card .value {
+            font-size: 2.5em;
+            font-weight: bold;
+            color: #333;
+        }
+        
+        .control-panel {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        
+        .btn {
+            padding: 15px 30px;
+            border: none;
+            border-radius: 10px;
+            font-size: 1.1em;
+            font-weight: bold;
+            cursor: pointer;
+            margin: 0 10px;
+            transition: all 0.3s;
+        }
+        
+        .btn-start {
+            background: #10b981;
+            color: white;
+        }
+        
+        .btn-start:hover {
+            background: #059669;
+        }
+        
+        .btn-stop {
+            background: #ef4444;
+            color: white;
+        }
+        
+        .btn-stop:hover {
+            background: #dc2626;
+        }
+        
+        .btn-restart {
+            background: #f59e0b;
+            color: white;
+        }
+        
+        .btn-restart:hover {
+            background: #d97706;
+        }
+        
+        .info-section {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .channel-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        
+        .channel-badge {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 8px 15px;
+            border-radius: 20px;
+            font-size: 0.9em;
+        }
+        
+        .terminal {
+            background: #1a1a1a;
+            border-radius: 15px;
+            padding: 20px;
+            color: #00ff00;
+            font-family: 'Courier New', monospace;
+            height: 300px;
+            overflow-y: auto;
+            margin-top: 20px;
+        }
+        
+        .terminal-line {
+            margin: 5px 0;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 <span>EXU CODEX</span> Bot Dashboard</h1>
+            <p>Owner: @{{ owner_username }} | ID: {{ owner_id }}</p>
+            <div id="statusBadge" class="status-badge status-stopped">⚫ Bot Stopped</div>
+        </div>
+        
+        <div class="stats-grid">
+            <div class="stat-card">
+                <h3>📊 Status</h3>
+                <div class="value" id="botStatus">Stopped</div>
+            </div>
+            <div class="stat-card">
+                <h3>⏰ Uptime</h3>
+                <div class="value" id="uptime">0s</div>
+            </div>
+            <div class="stat-card">
+                <h3>👥 Users</h3>
+                <div class="value" id="totalUsers">0</div>
+            </div>
+            <div class="stat-card">
+                <h3>📢 Groups</h3>
+                <div class="value" id="totalGroups">0</div>
+            </div>
+            <div class="stat-card">
+                <h3>📥 Clones</h3>
+                <div class="value" id="totalClones">0</div>
+            </div>
+            <div class="stat-card">
+                <h3>🔄 Restarts</h3>
+                <div class="value" id="restartCount">0</div>
+            </div>
+        </div>
+        
+        <div class="control-panel">
+            <h2>🎮 Bot Controls</h2>
+            <button class="btn btn-start" onclick="startBot()">▶️ Start Bot</button>
+            <button class="btn btn-stop" onclick="stopBot()">⏹️ Stop Bot</button>
+            <button class="btn btn-restart" onclick="restartBot()">🔄 Restart Bot</button>
+        </div>
+        
+        <div class="info-section">
+            <h3>📢 Required Channels</h3>
+            <div class="channel-list">
+                <span class="channel-badge">𝐄𝐗𝐔 𝐂𝐎𝐃𝐄𝐑</span>
+                <span class="channel-badge">𝐄𝐗𝐔 𝐋𝐈𝐕𝐄</span>
+                <span class="channel-badge">𝐅𝐔𝐍 𝐂𝐎𝐃𝐄𝐗</span>
+            </div>
+        </div>
+        
+        <div class="terminal" id="terminal">
+            <div class="terminal-line">$ EXU CODEX Terminal v1.0</div>
+            <div class="terminal-line">$ System ready. Click Start to launch bot...</div>
+        </div>
+    </div>
+    
+    <script>
+        const socket = io();
+        
+        socket.on('connect', function() {
+            console.log('Connected to dashboard');
+            addTerminalLine('Connected to dashboard');
+        });
+        
+        socket.on('terminal_output', function(data) {
+            addTerminalLine(data.output);
+        });
+        
+        socket.on('status_update', function(data) {
+            updateDashboard(data);
+        });
+        
+        function updateDashboard(data) {
+            const statusBadge = document.getElementById('statusBadge');
+            if (data.running) {
+                statusBadge.className = 'status-badge status-running';
+                statusBadge.innerHTML = '🟢 Bot Running';
+                document.getElementById('botStatus').innerText = 'Running';
+            } else {
+                statusBadge.className = 'status-badge status-stopped';
+                statusBadge.innerHTML = '⚫ Bot Stopped';
+                document.getElementById('botStatus').innerText = 'Stopped';
+            }
+            
+            document.getElementById('uptime').innerText = data.uptime;
+            document.getElementById('totalUsers').innerText = data.total_users;
+            document.getElementById('totalGroups').innerText = data.total_groups;
+            document.getElementById('totalClones').innerText = data.total_clones;
+            document.getElementById('restartCount').innerText = data.restart_count;
+        }
+        
+        function addTerminalLine(text) {
+            const terminal = document.getElementById('terminal');
+            const line = document.createElement('div');
+            line.className = 'terminal-line';
+            line.textContent = '$ ' + text;
+            terminal.appendChild(line);
+            terminal.scrollTop = terminal.scrollHeight;
+        }
+        
+        function startBot() {
+            addTerminalLine('Starting bot...');
+            fetch('/api/bot/start', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        addTerminalLine('✅ ' + data.message);
+                    } else {
+                        addTerminalLine('❌ ' + data.message);
+                    }
+                });
+        }
+        
+        function stopBot() {
+            addTerminalLine('Stopping bot...');
+            fetch('/api/bot/stop', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        addTerminalLine('⏹️ ' + data.message);
+                    } else {
+                        addTerminalLine('❌ ' + data.message);
+                    }
+                });
+        }
+        
+        function restartBot() {
+            addTerminalLine('Restarting bot...');
+            fetch('/api/bot/restart', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        addTerminalLine('🔄 ' + data.message);
+                    } else {
+                        addTerminalLine('❌ ' + data.message);
+                    }
+                });
+        }
+        
+        // Update stats every 3 seconds
+        setInterval(() => {
+            fetch('/api/bot/status')
+                .then(response => response.json())
+                .then(data => updateDashboard(data));
+        }, 3000);
+    </script>
+</body>
+</html>
+'''
+
+def update_stats():
+    """Update bot statistics for dashboard"""
+    while True:
+        if bot_status['running'] and bot_status['start_time']:
+            uptime = datetime.now() - datetime.fromisoformat(bot_status['start_time'])
+            bot_status['uptime'] = str(uptime).split('.')[0]
+        
+        bot_status['total_users'] = len(user_data)
+        bot_status['total_groups'] = len(group_settings)
+        bot_status['total_clones'] = total_clones
+        
+        socketio.emit('status_update', bot_status)
+        time.sleep(2)
 
 if __name__ == '__main__':
-    main()
+    # Start stats update thread
+    threading.Thread(target=update_stats, daemon=True).start()
+    
+    # Run Flask app
+    print("🌐 Web Dashboard available at http://localhost:5000")
+    socketio.run(app, host='0.0.0.0', port=5000, debug=False, allow_unsafe_werkzeug=True)
