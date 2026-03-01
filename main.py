@@ -10,7 +10,7 @@ import zipfile
 import io
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
-from datetime import datetime
+from datetime import datetime, timedelta
 import platform
 from pathlib import Path
 import asyncio
@@ -33,6 +33,13 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = "8222681776:AAEZoWzGxOc2wXuVKCqQjWwcT6IMxHGMDoM"
 OWNER_ID = 8469461108
 OWNER_USERNAME = "EXUCODER"
+
+# Required channels with display names (MUST BE DEFINED AT THE TOP)
+REQUIRED_CHANNELS = [
+    {"username": "@exucoder1", "id": "@exucoder1", "display_name": "𝐄𝐗𝐔 𝐂𝐎𝐃𝐄𝐑"},
+    {"username": "@exulive", "id": "@exulive", "display_name": "𝐄𝐗𝐔 𝐋𝐈𝐕𝐄"},
+    {"username": "@funcodex", "id": "@funcodex", "display_name": "𝐅𝐔𝐍 𝐂𝐎𝐃𝐄𝐗"}
+]
 
 # Flask app for keeping bot alive
 app = Flask(__name__)
@@ -69,6 +76,7 @@ def home():
             'banned_groups': len(banned_groups),
             'total_clones': total_clones
         },
+        'channels': [ch['display_name'] for ch in REQUIRED_CHANNELS],
         'maintenance_mode': maintenance_mode,
         'force_join': force_join_enabled
     })
@@ -1103,7 +1111,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for channel in REQUIRED_CHANNELS:
                 try:
                     chat_info = await context.bot.get_chat(chat_id=channel['id'])
-                    total_channel_members[channel['display_name']] = await chat_info.get_member_count()
+                    total_channel_members[channel['display_name']] = chat_info.get_member_count()
                 except:
                     total_channel_members[channel['display_name']] = 'N/A'
             
@@ -1418,12 +1426,9 @@ def main():
     for channel in REQUIRED_CHANNELS:
         print(f"   {channel['display_name']} (@{channel['username'][1:]})")
     print(f"{style_text('👥 𝐆𝐫𝐨𝐮𝐩 𝐌𝐨𝐝𝐞')}: {style_text('𝐀𝐜𝐭𝐢𝐯𝐞')}")
-    print(f"{style_text('🌐 𝐅𝐥𝐚𝐬𝐤 𝐒𝐞𝐫𝐯𝐞𝐫')}: {style_text('𝐑𝐮𝐧𝐧𝐢𝐧𝐠 𝐨𝐧 𝐩𝐨𝐫𝐭 8080')}")
+    print(f"{style_text('🌐 𝐅𝐥𝐚𝐬𝐤 𝐒𝐞𝐫𝐯𝐞𝐫')}: {style_text('𝐑𝐮𝐧𝐧𝐢𝐧𝐠 𝐨𝐧 𝐩𝐨𝐫𝐭')} {os.environ.get('PORT', 8080)}")
     
     application.run_polling(allowed_updates=Update.ALL_TYPES)
-
-# Required for some hosting platforms
-from datetime import timedelta
 
 if __name__ == '__main__':
     main()
