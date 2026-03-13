@@ -29,7 +29,7 @@ import os
 
 # ==================== CONFIGURATION ====================
 BOT_TOKEN = "8325285069:AAHLmn__ebAMG7gZy6WL-COq4BbCqvkcVVs"
-OWNER_ID = 8469461108  # Updated owner ID
+OWNER_ID = 8469461108
 DATABASE_FILE = "bot_database.sqlite3"
 
 # Conversation states
@@ -229,7 +229,7 @@ class MessageFormatter:
 👤 {bold_unicode('𝐔𝐬𝐞𝐫:')} {full_name}
 🆔 {bold_unicode('𝐔𝐬𝐞𝐫 𝐈𝐃:')} {user_id}
 🌟 {bold_unicode('𝐔𝐬𝐞𝐫𝐧𝐚𝐦𝐞:')} @{username}
-🍑 {bold_unicode('𝐏𝐫𝐨𝐟𝐢𝐥𝐞 𝐋𝐢𝐧𝐤:')} [🔗 {bold_unicode('𝐂𝐥𝐢𝐜𝐤 𝐇𝐞𝐫𝐞')}](tg://user?id={user_data.get('user_id')})
+🍑 {bold_unicode('𝐏𝐫𝐨𝐟𝐢𝐥𝐞 𝐋𝐢𝐧𝐤:')} [🔗](tg://user?id={user_data.get('user_id')})
 ⚡ {bold_unicode('𝐖𝐞𝐥𝐜𝐨𝐦𝐞 𝐭𝐨')} {group}
 {bold_unicode('𝐘𝐨𝐮 𝐡𝐚𝐯𝐞 𝐬𝐮𝐜𝐜𝐞𝐬𝐬𝐟𝐮𝐥𝐥𝐲 𝐣𝐨𝐢𝐧𝐞𝐝 𝐭𝐡𝐞 𝐠𝐫𝐨𝐮𝐩!')}"""
 
@@ -320,17 +320,17 @@ class MessageFormatter:
 {bold_unicode('𝐌𝐞𝐬𝐬𝐚𝐠𝐞 𝐰𝐢𝐭𝐡 𝐥𝐢𝐧𝐤 𝐰𝐚𝐬 𝐝𝐞𝐥𝐞𝐭𝐞𝐝')}"""
 
     @staticmethod
-    def erotic_message(user_data: Dict) -> str:
+    def private_message(user_data: Dict) -> str:
         full_name = user_data.get('full_name', 'User')
         user_id = str(user_data.get('user_id', 'N/A'))
         username = user_data.get('username', 'N/A')
         
-        return f"""╔══════《 🔥 {bold_unicode('𝐏𝐫𝐢𝐯𝐚𝐭𝐞 𝐌𝐨𝐦𝐞𝐧𝐭')} 》══════╗
+        return f"""╔══════《 🔥 {bold_unicode('𝐏𝐫𝐢𝐯𝐚𝐭𝐞')} 》══════╗
 👤 {bold_unicode('𝐍𝐚𝐦𝐞:')} {full_name}
 🆔 {bold_unicode('𝐈𝐃:')} {user_id}
 🌟 {bold_unicode('𝐔𝐬𝐞𝐫𝐧𝐚𝐦𝐞:')} @{username}
-💋 {bold_unicode('𝐒𝐞𝐜𝐫𝐞𝐭 𝐋𝐢𝐧𝐤:')} [🔞 {bold_unicode('𝐓𝐨𝐮𝐜𝐡 𝐌𝐞')}](tg://user?id={user_data.get('user_id')})
-╰═══════《 💕 𝐄𝐧𝐣𝐨𝐲 》═══════╝"""
+💋 {bold_unicode('𝐋𝐢𝐧𝐤:')} (tg://user?id={user_data.get('user_id')})
+╰═══════《 💕 》═══════╝"""
 
     @staticmethod
     def error_message(text: str) -> str:
@@ -371,19 +371,21 @@ class MessageFormatter:
 🔢 {bold_unicode('𝐖𝐚𝐫𝐧𝐬:')} {warn_count}/{max_warns}"""
 
     @staticmethod
-    def user_info(user_data: Dict, chat_title: str, warn_count: int = 0) -> str:
+    def user_info(user_data: Dict, chat_title: str, chat_id: int, warn_count: int = 0) -> str:
         full_name = user_data.get('full_name', 'User')
         user_id = str(user_data.get('user_id', 'N/A'))
         username = user_data.get('username', 'N/A')
         chat = chat_title
         
-        return f"""📋 {bold_unicode('𝐔𝐬𝐞𝐫 𝐈𝐧𝐟𝐨𝐫𝐦𝐚𝐭𝐢𝐨𝐧')}
+        return f"""╔══════《 📋 {bold_unicode('𝐈𝐧𝐟𝐨')} 》══════╗
 👤 {bold_unicode('𝐍𝐚𝐦𝐞:')} {full_name}
 🆔 {bold_unicode('𝐈𝐃:')} {user_id}
 🌟 {bold_unicode('𝐔𝐬𝐞𝐫𝐧𝐚𝐦𝐞:')} @{username}
 💬 {bold_unicode('𝐆𝐫𝐨𝐮𝐩:')} {chat}
+💬 {bold_unicode('𝐆𝐫𝐨𝐮𝐩 𝐈𝐃:')} {chat_id}
 ⚠️ {bold_unicode('𝐖𝐚𝐫𝐧𝐬:')} {warn_count}
-🔗 {bold_unicode('𝐋𝐢𝐧𝐤:')} [👤 {bold_unicode('𝐏𝐫𝐨𝐟𝐢𝐥𝐞')}](tg://user?id={user_data.get('user_id')})"""
+🔗 {bold_unicode('𝐏𝐫𝐨𝐟𝐢𝐥𝐞:')} (tg://user?id={user_data.get('user_id')})
+╰═══════《 💫 》═══════╝"""
 
 # ==================== BOT HANDLERS ====================
 class BotHandlers:
@@ -394,6 +396,8 @@ class BotHandlers:
         self.pending_confirmation = {}
         self.user_warns = {}  # Store warns: {chat_id: {user_id: count}}
         self.muted_users = {}  # Store muted users with expiration
+        # Default profile picture for users without photo
+        self.default_profile = "https://i.imgur.com/6UxHt6U.png"  # Default avatar
     
     async def is_admin(self, context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int) -> bool:
         try:
@@ -403,6 +407,7 @@ class BotHandlers:
             return False
     
     async def get_user_profile_photo(self, context: ContextTypes.DEFAULT_TYPE, user_id: int):
+        """Get user profile photo or return default"""
         try:
             photos = await context.bot.get_user_profile_photos(user_id, limit=1)
             if photos.total_count > 0:
@@ -428,29 +433,47 @@ class BotHandlers:
         # Check if command has arguments (username or ID)
         if context.args:
             arg = context.args[0]
+            
             # Check if it's a username (starts with @)
             if arg.startswith('@'):
-                username = arg[1:]
+                username = arg[1:].lower()
+                
+                # Try to get all administrators
                 try:
-                    # Try to get user by username in this chat
                     chat = update.effective_chat
-                    async for member in context.bot.get_chat_administrators(chat.id):
-                        if member.user.username and member.user.username.lower() == username.lower():
-                            user = member.user
-                            break
-                except:
-                    pass
+                    admins = await context.bot.get_chat_administrators(chat.id)
+                    for admin in admins:
+                        if admin.user.username and admin.user.username.lower() == username:
+                            return admin.user
+                except Exception as e:
+                    logger.error(f"Error finding user by username: {e}")
+                    
             # Check if it's a user ID
             elif arg.lstrip('-').isdigit():
-                user_id = int(arg)
                 try:
+                    user_id = int(arg)
                     # Try to get chat member
                     chat_member = await context.bot.get_chat_member(update.effective_chat.id, user_id)
-                    user = chat_member.user
+                    return chat_member.user
                 except:
                     pass
         
-        return user
+        return None
+    
+    async def find_user_by_username(self, context: ContextTypes.DEFAULT_TYPE, chat_id: int, username: str):
+        """Find a user by username in the chat"""
+        username = username.lower().replace('@', '')
+        
+        try:
+            # Try to get all administrators
+            admins = await context.bot.get_chat_administrators(chat_id)
+            for admin in admins:
+                if admin.user.username and admin.user.username.lower() == username:
+                    return admin.user
+            return None
+        except Exception as e:
+            logger.error(f"Error finding user by username: {e}")
+            return None
     
     async def ban_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Ban a user - works with reply or username/ID"""
@@ -461,28 +484,83 @@ class BotHandlers:
             await update.message.reply_text(self.formatter.error_message("𝐀𝐝𝐦𝐢𝐧 𝐨𝐧𝐥𝐲 𝐜𝐨𝐦𝐦𝐚𝐧𝐝!"))
             return
         
-        target_user = await self.extract_user(update, context)
-        if not target_user:
-            await update.message.reply_text(
-                self.formatter.error_message("𝐑𝐞𝐩𝐥𝐲 𝐭𝐨 𝐚 𝐮𝐬𝐞𝐫'𝐬 𝐦𝐞𝐬𝐬𝐚𝐠𝐞 𝐨𝐫 𝐩𝐫𝐨𝐯𝐢𝐝𝐞 @𝐮𝐬𝐞𝐫𝐧𝐚𝐦𝐞/𝐈𝐃!")
-            )
+        # Check if replying to a message
+        if update.message.reply_to_message:
+            target_user = update.message.reply_to_message.from_user
+            chat_id = update.effective_chat.id
+            
+            try:
+                await context.bot.ban_chat_member(chat_id, target_user.id)
+                user_data = {
+                    'full_name': target_user.full_name,
+                    'user_id': target_user.id,
+                    'username': target_user.username or "N/A"
+                }
+                await update.message.reply_text(
+                    self.formatter.action_message("𝐁𝐚𝐧𝐧𝐞𝐝", user_data, update.effective_user.full_name),
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            except Exception as e:
+                await update.message.reply_text(self.formatter.error_message(f"𝐅𝐚𝐢𝐥𝐞𝐝: {str(e)}"))
             return
         
-        chat_id = update.effective_chat.id
+        # Check if username provided
+        if context.args:
+            username = context.args[0]
+            
+            if username.startswith('@'):
+                # Try to find user by username
+                chat_id = update.effective_chat.id
+                target_user = await self.find_user_by_username(context, chat_id, username)
+                
+                if target_user:
+                    try:
+                        await context.bot.ban_chat_member(chat_id, target_user.id)
+                        user_data = {
+                            'full_name': target_user.full_name,
+                            'user_id': target_user.id,
+                            'username': target_user.username or "N/A"
+                        }
+                        await update.message.reply_text(
+                            self.formatter.action_message("𝐁𝐚𝐧𝐧𝐞𝐝", user_data, update.effective_user.full_name),
+                            parse_mode=ParseMode.MARKDOWN
+                        )
+                    except Exception as e:
+                        await update.message.reply_text(self.formatter.error_message(f"𝐅𝐚𝐢𝐥𝐞𝐝: {str(e)}"))
+                else:
+                    await update.message.reply_text(
+                        self.formatter.error_message(f"𝐔𝐬𝐞𝐫 {username} 𝐧𝐨𝐭 𝐟𝐨𝐮𝐧𝐝 𝐢𝐧 𝐭𝐡𝐢𝐬 𝐠𝐫𝐨𝐮𝐩!")
+                    )
+                return
+            
+            elif username.lstrip('-').isdigit():
+                # Try user ID
+                try:
+                    user_id = int(username)
+                    chat_id = update.effective_chat.id
+                    
+                    # Check if user exists in chat
+                    chat_member = await context.bot.get_chat_member(chat_id, user_id)
+                    target_user = chat_member.user
+                    
+                    await context.bot.ban_chat_member(chat_id, user_id)
+                    user_data = {
+                        'full_name': target_user.full_name,
+                        'user_id': target_user.id,
+                        'username': target_user.username or "N/A"
+                    }
+                    await update.message.reply_text(
+                        self.formatter.action_message("𝐁𝐚𝐧𝐧𝐞𝐝", user_data, update.effective_user.full_name),
+                        parse_mode=ParseMode.MARKDOWN
+                    )
+                except Exception as e:
+                    await update.message.reply_text(self.formatter.error_message(f"𝐅𝐚𝐢𝐥𝐞𝐝: {str(e)}"))
+                return
         
-        try:
-            await context.bot.ban_chat_member(chat_id, target_user.id)
-            user_data = {
-                'full_name': target_user.full_name,
-                'user_id': target_user.id,
-                'username': target_user.username or "N/A"
-            }
-            await update.message.reply_text(
-                self.formatter.action_message("𝐁𝐚𝐧𝐧𝐞𝐝", user_data, update.effective_user.full_name),
-                parse_mode=ParseMode.MARKDOWN
-            )
-        except Exception as e:
-            await update.message.reply_text(self.formatter.error_message(f"𝐅𝐚𝐢𝐥𝐞𝐝: {str(e)}"))
+        # If none of the above
+        await update.message.reply_text(
+            self.formatter.error_message("𝐑𝐞𝐩𝐥𝐲 𝐭𝐨 𝐚 𝐮𝐬𝐞𝐫'𝐬 𝐦𝐞𝐬𝐬𝐚𝐠𝐞 𝐨𝐫 𝐩𝐫𝐨𝐯𝐢𝐝𝐞 @𝐮𝐬𝐞𝐫𝐧𝐚𝐦𝐞/𝐈𝐃!")
+        )
     
     async def unban_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Unban a user - works with reply or username/ID"""
@@ -493,28 +571,28 @@ class BotHandlers:
             await update.message.reply_text(self.formatter.error_message("𝐀𝐝𝐦𝐢𝐧 𝐨𝐧𝐥𝐲 𝐜𝐨𝐦𝐦𝐚𝐧𝐝!"))
             return
         
-        target_user = await self.extract_user(update, context)
-        if not target_user:
-            await update.message.reply_text(
-                self.formatter.error_message("𝐑𝐞𝐩𝐥𝐲 𝐭𝐨 𝐚 𝐮𝐬𝐞𝐫'𝐬 𝐦𝐞𝐬𝐬𝐚𝐠𝐞 𝐨𝐫 𝐩𝐫𝐨𝐯𝐢𝐝𝐞 @𝐮𝐬𝐞𝐫𝐧𝐚𝐦𝐞/𝐈𝐃!")
-            )
+        if update.message.reply_to_message:
+            target_user = update.message.reply_to_message.from_user
+            chat_id = update.effective_chat.id
+            
+            try:
+                await context.bot.unban_chat_member(chat_id, target_user.id)
+                user_data = {
+                    'full_name': target_user.full_name,
+                    'user_id': target_user.id,
+                    'username': target_user.username or "N/A"
+                }
+                await update.message.reply_text(
+                    self.formatter.action_message("𝐔𝐧𝐛𝐚𝐧𝐧𝐞𝐝", user_data, update.effective_user.full_name),
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            except Exception as e:
+                await update.message.reply_text(self.formatter.error_message(f"𝐅𝐚𝐢𝐥𝐞𝐝: {str(e)}"))
             return
         
-        chat_id = update.effective_chat.id
-        
-        try:
-            await context.bot.unban_chat_member(chat_id, target_user.id)
-            user_data = {
-                'full_name': target_user.full_name,
-                'user_id': target_user.id,
-                'username': target_user.username or "N/A"
-            }
-            await update.message.reply_text(
-                self.formatter.action_message("𝐔𝐧𝐛𝐚𝐧𝐧𝐞𝐝", user_data, update.effective_user.full_name),
-                parse_mode=ParseMode.MARKDOWN
-            )
-        except Exception as e:
-            await update.message.reply_text(self.formatter.error_message(f"𝐅𝐚𝐢𝐥𝐞𝐝: {str(e)}"))
+        await update.message.reply_text(
+            self.formatter.error_message("𝐑𝐞𝐩𝐥𝐲 𝐭𝐨 𝐚 𝐮𝐬𝐞𝐫'𝐬 𝐦𝐞𝐬𝐬𝐚𝐠𝐞 𝐭𝐨 𝐮𝐧𝐛𝐚𝐧!")
+        )
     
     async def kick_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Kick a user - works with reply or username/ID"""
@@ -525,32 +603,32 @@ class BotHandlers:
             await update.message.reply_text(self.formatter.error_message("𝐀𝐝𝐦𝐢𝐧 𝐨𝐧𝐥𝐲 𝐜𝐨𝐦𝐦𝐚𝐧𝐝!"))
             return
         
-        target_user = await self.extract_user(update, context)
-        if not target_user:
-            await update.message.reply_text(
-                self.formatter.error_message("𝐑𝐞𝐩𝐥𝐲 𝐭𝐨 𝐚 𝐮𝐬𝐞𝐫'𝐬 𝐦𝐞𝐬𝐬𝐚𝐠𝐞 𝐨𝐫 𝐩𝐫𝐨𝐯𝐢𝐝𝐞 @𝐮𝐬𝐞𝐫𝐧𝐚𝐦𝐞/𝐈𝐃!")
-            )
+        if update.message.reply_to_message:
+            target_user = update.message.reply_to_message.from_user
+            chat_id = update.effective_chat.id
+            
+            try:
+                await context.bot.ban_chat_member(chat_id, target_user.id)
+                await context.bot.unban_chat_member(chat_id, target_user.id)
+                user_data = {
+                    'full_name': target_user.full_name,
+                    'user_id': target_user.id,
+                    'username': target_user.username or "N/A"
+                }
+                await update.message.reply_text(
+                    self.formatter.action_message("𝐊𝐢𝐜𝐤𝐞𝐝", user_data, update.effective_user.full_name),
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            except Exception as e:
+                await update.message.reply_text(self.formatter.error_message(f"𝐅𝐚𝐢𝐥𝐞𝐝: {str(e)}"))
             return
         
-        chat_id = update.effective_chat.id
-        
-        try:
-            await context.bot.ban_chat_member(chat_id, target_user.id)
-            await context.bot.unban_chat_member(chat_id, target_user.id)
-            user_data = {
-                'full_name': target_user.full_name,
-                'user_id': target_user.id,
-                'username': target_user.username or "N/A"
-            }
-            await update.message.reply_text(
-                self.formatter.action_message("𝐊𝐢𝐜𝐤𝐞𝐝", user_data, update.effective_user.full_name),
-                parse_mode=ParseMode.MARKDOWN
-            )
-        except Exception as e:
-            await update.message.reply_text(self.formatter.error_message(f"𝐅𝐚𝐢𝐥𝐞𝐝: {str(e)}"))
+        await update.message.reply_text(
+            self.formatter.error_message("𝐑𝐞𝐩𝐥𝐲 𝐭𝐨 𝐚 𝐮𝐬𝐞𝐫'𝐬 𝐦𝐞𝐬𝐬𝐚𝐠𝐞 𝐭𝐨 𝐤𝐢𝐜𝐤!")
+        )
     
     async def mute_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Mute a user - works with reply or username/ID, optional duration"""
+        """Mute a user - works with reply or username/ID"""
         if update.effective_chat.type not in ["group", "supergroup"]:
             return
         
@@ -558,52 +636,52 @@ class BotHandlers:
             await update.message.reply_text(self.formatter.error_message("𝐀𝐝𝐦𝐢𝐧 𝐨𝐧𝐥𝐲 𝐜𝐨𝐦𝐦𝐚𝐧𝐝!"))
             return
         
-        target_user = await self.extract_user(update, context)
-        if not target_user:
-            await update.message.reply_text(
-                self.formatter.error_message("𝐑𝐞𝐩𝐥𝐲 𝐭𝐨 𝐚 𝐮𝐬𝐞𝐫'𝐬 𝐦𝐞𝐬𝐬𝐚𝐠𝐞 𝐨𝐫 𝐩𝐫𝐨𝐯𝐢𝐝𝐞 @𝐮𝐬𝐞𝐫𝐧𝐚𝐦𝐞/𝐈𝐃!")
-            )
+        if update.message.reply_to_message:
+            target_user = update.message.reply_to_message.from_user
+            chat_id = update.effective_chat.id
+            
+            # Parse duration (default: 1 hour)
+            duration_minutes = 60
+            duration_text = "1 hour"
+            
+            if context.args and len(context.args) >= 1:
+                try:
+                    duration_minutes = int(context.args[0])
+                    if duration_minutes < 1:
+                        duration_minutes = 1
+                    if duration_minutes > 43200:  # Max 30 days
+                        duration_minutes = 43200
+                    duration_text = f"{duration_minutes} minutes"
+                except:
+                    pass
+            
+            until_date = datetime.now() + timedelta(minutes=duration_minutes)
+            permissions = ChatPermissions(can_send_messages=False)
+            
+            try:
+                await context.bot.restrict_chat_member(chat_id, target_user.id, permissions, until_date=until_date)
+                
+                # Store in muted_users
+                if chat_id not in self.muted_users:
+                    self.muted_users[chat_id] = {}
+                self.muted_users[chat_id][target_user.id] = until_date
+                
+                user_data = {
+                    'full_name': target_user.full_name,
+                    'user_id': target_user.id,
+                    'username': target_user.username or "N/A"
+                }
+                await update.message.reply_text(
+                    self.formatter.action_message("𝐌𝐮𝐭𝐞𝐝", user_data, update.effective_user.full_name, duration_text),
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            except Exception as e:
+                await update.message.reply_text(self.formatter.error_message(f"𝐅𝐚𝐢𝐥𝐞𝐝: {str(e)}"))
             return
         
-        chat_id = update.effective_chat.id
-        
-        # Parse duration (default: 1 hour)
-        duration_minutes = 60
-        duration_text = "1 hour"
-        
-        if context.args and len(context.args) > 1:
-            try:
-                duration_minutes = int(context.args[1])
-                if duration_minutes < 1:
-                    duration_minutes = 1
-                if duration_minutes > 43200:  # Max 30 days
-                    duration_minutes = 43200
-                duration_text = f"{duration_minutes} minutes"
-            except:
-                pass
-        
-        until_date = datetime.now() + timedelta(minutes=duration_minutes)
-        permissions = ChatPermissions(can_send_messages=False)
-        
-        try:
-            await context.bot.restrict_chat_member(chat_id, target_user.id, permissions, until_date=until_date)
-            
-            # Store in muted_users
-            if chat_id not in self.muted_users:
-                self.muted_users[chat_id] = {}
-            self.muted_users[chat_id][target_user.id] = until_date
-            
-            user_data = {
-                'full_name': target_user.full_name,
-                'user_id': target_user.id,
-                'username': target_user.username or "N/A"
-            }
-            await update.message.reply_text(
-                self.formatter.action_message("𝐌𝐮𝐭𝐞𝐝", user_data, update.effective_user.full_name, duration_text),
-                parse_mode=ParseMode.MARKDOWN
-            )
-        except Exception as e:
-            await update.message.reply_text(self.formatter.error_message(f"𝐅𝐚𝐢𝐥𝐞𝐝: {str(e)}"))
+        await update.message.reply_text(
+            self.formatter.error_message("𝐑𝐞𝐩𝐥𝐲 𝐭𝐨 𝐚 𝐮𝐬𝐞𝐫'𝐬 𝐦𝐞𝐬𝐬𝐚𝐠𝐞 𝐭𝐨 𝐦𝐮𝐭𝐞!")
+        )
     
     async def unmute_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Unmute a user - works with reply or username/ID"""
@@ -614,41 +692,41 @@ class BotHandlers:
             await update.message.reply_text(self.formatter.error_message("𝐀𝐝𝐦𝐢𝐧 𝐨𝐧𝐥𝐲 𝐜𝐨𝐦𝐦𝐚𝐧𝐝!"))
             return
         
-        target_user = await self.extract_user(update, context)
-        if not target_user:
-            await update.message.reply_text(
-                self.formatter.error_message("𝐑𝐞𝐩𝐥𝐲 𝐭𝐨 𝐚 𝐮𝐬𝐞𝐫'𝐬 𝐦𝐞𝐬𝐬𝐚𝐠𝐞 𝐨𝐫 𝐩𝐫𝐨𝐯𝐢𝐝𝐞 @𝐮𝐬𝐞𝐫𝐧𝐚𝐦𝐞/𝐈𝐃!")
+        if update.message.reply_to_message:
+            target_user = update.message.reply_to_message.from_user
+            chat_id = update.effective_chat.id
+            
+            permissions = ChatPermissions(
+                can_send_messages=True,
+                can_send_media_messages=True,
+                can_send_polls=True,
+                can_send_other_messages=True,
+                can_add_web_page_previews=True
             )
+            
+            try:
+                await context.bot.restrict_chat_member(chat_id, target_user.id, permissions)
+                
+                # Remove from muted_users
+                if chat_id in self.muted_users and target_user.id in self.muted_users[chat_id]:
+                    del self.muted_users[chat_id][target_user.id]
+                
+                user_data = {
+                    'full_name': target_user.full_name,
+                    'user_id': target_user.id,
+                    'username': target_user.username or "N/A"
+                }
+                await update.message.reply_text(
+                    self.formatter.action_message("𝐔𝐧𝐦𝐮𝐭𝐞𝐝", user_data, update.effective_user.full_name),
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            except Exception as e:
+                await update.message.reply_text(self.formatter.error_message(f"𝐅𝐚𝐢𝐥𝐞𝐝: {str(e)}"))
             return
         
-        chat_id = update.effective_chat.id
-        
-        permissions = ChatPermissions(
-            can_send_messages=True,
-            can_send_media_messages=True,
-            can_send_polls=True,
-            can_send_other_messages=True,
-            can_add_web_page_previews=True
+        await update.message.reply_text(
+            self.formatter.error_message("𝐑𝐞𝐩𝐥𝐲 𝐭𝐨 𝐚 𝐮𝐬𝐞𝐫'𝐬 𝐦𝐞𝐬𝐬𝐚𝐠𝐞 𝐭𝐨 𝐮𝐧𝐦𝐮𝐭𝐞!")
         )
-        
-        try:
-            await context.bot.restrict_chat_member(chat_id, target_user.id, permissions)
-            
-            # Remove from muted_users
-            if chat_id in self.muted_users and target_user.id in self.muted_users[chat_id]:
-                del self.muted_users[chat_id][target_user.id]
-            
-            user_data = {
-                'full_name': target_user.full_name,
-                'user_id': target_user.id,
-                'username': target_user.username or "N/A"
-            }
-            await update.message.reply_text(
-                self.formatter.action_message("𝐔𝐧𝐦𝐮𝐭𝐞𝐝", user_data, update.effective_user.full_name),
-                parse_mode=ParseMode.MARKDOWN
-            )
-        except Exception as e:
-            await update.message.reply_text(self.formatter.error_message(f"𝐅𝐚𝐢𝐥𝐞𝐝: {str(e)}"))
     
     async def warn_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Warn a user - works with reply or username/ID"""
@@ -659,47 +737,47 @@ class BotHandlers:
             await update.message.reply_text(self.formatter.error_message("𝐀𝐝𝐦𝐢𝐧 𝐨𝐧𝐥𝐲 𝐜𝐨𝐦𝐦𝐚𝐧𝐝!"))
             return
         
-        target_user = await self.extract_user(update, context)
-        if not target_user:
-            await update.message.reply_text(
-                self.formatter.error_message("𝐑𝐞𝐩𝐥𝐲 𝐭𝐨 𝐚 𝐮𝐬𝐞𝐫'𝐬 𝐦𝐞𝐬𝐬𝐚𝐠𝐞 𝐨𝐫 𝐩𝐫𝐨𝐯𝐢𝐝𝐞 @𝐮𝐬𝐞𝐫𝐧𝐚𝐦𝐞/𝐈𝐃!")
-            )
-            return
-        
-        chat_id = update.effective_chat.id
-        
-        # Initialize warns for this chat
-        if chat_id not in self.user_warns:
-            self.user_warns[chat_id] = {}
-        
-        # Get current warn count
-        current_warns = self.user_warns[chat_id].get(target_user.id, 0)
-        current_warns += 1
-        self.user_warns[chat_id][target_user.id] = current_warns
-        
-        user_data = {
-            'full_name': target_user.full_name,
-            'user_id': target_user.id,
-            'username': target_user.username or "N/A"
-        }
-        
-        # Auto-ban after 3 warns
-        if current_warns >= 3:
-            try:
-                await context.bot.ban_chat_member(chat_id, target_user.id)
+        if update.message.reply_to_message:
+            target_user = update.message.reply_to_message.from_user
+            chat_id = update.effective_chat.id
+            
+            # Initialize warns for this chat
+            if chat_id not in self.user_warns:
+                self.user_warns[chat_id] = {}
+            
+            # Get current warn count
+            current_warns = self.user_warns[chat_id].get(target_user.id, 0)
+            current_warns += 1
+            self.user_warns[chat_id][target_user.id] = current_warns
+            
+            user_data = {
+                'full_name': target_user.full_name,
+                'user_id': target_user.id,
+                'username': target_user.username or "N/A"
+            }
+            
+            # Auto-ban after 3 warns
+            if current_warns >= 3:
+                try:
+                    await context.bot.ban_chat_member(chat_id, target_user.id)
+                    await update.message.reply_text(
+                        self.formatter.action_message("𝐁𝐚𝐧𝐧𝐞𝐝 (3 𝐰𝐚𝐫𝐧𝐬)", user_data, update.effective_user.full_name),
+                        parse_mode=ParseMode.MARKDOWN
+                    )
+                    # Reset warns
+                    self.user_warns[chat_id][target_user.id] = 0
+                except Exception as e:
+                    await update.message.reply_text(self.formatter.error_message(f"𝐅𝐚𝐢𝐥𝐞𝐝 𝐭𝐨 𝐛𝐚𝐧: {str(e)}"))
+            else:
                 await update.message.reply_text(
-                    self.formatter.action_message("𝐁𝐚𝐧𝐧𝐞𝐝 (3 𝐰𝐚𝐫𝐧𝐬)", user_data, update.effective_user.full_name),
+                    self.formatter.warn_message(user_data, update.effective_user.full_name, current_warns),
                     parse_mode=ParseMode.MARKDOWN
                 )
-                # Reset warns
-                self.user_warns[chat_id][target_user.id] = 0
-            except Exception as e:
-                await update.message.reply_text(self.formatter.error_message(f"𝐅𝐚𝐢𝐥𝐞𝐝 𝐭𝐨 𝐛𝐚𝐧: {str(e)}"))
-        else:
-            await update.message.reply_text(
-                self.formatter.warn_message(user_data, update.effective_user.full_name, current_warns),
-                parse_mode=ParseMode.MARKDOWN
-            )
+            return
+        
+        await update.message.reply_text(
+            self.formatter.error_message("𝐑𝐞𝐩𝐥𝐲 𝐭𝐨 𝐚 𝐮𝐬𝐞𝐫'𝐬 𝐦𝐞𝐬𝐬𝐚𝐠𝐞 𝐭𝐨 𝐰𝐚𝐫𝐧!")
+        )
     
     async def warns_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show warns for a user"""
@@ -710,25 +788,25 @@ class BotHandlers:
             await update.message.reply_text(self.formatter.error_message("𝐀𝐝𝐦𝐢𝐧 𝐨𝐧𝐥𝐲 𝐜𝐨𝐦𝐦𝐚𝐧𝐝!"))
             return
         
-        target_user = await self.extract_user(update, context)
-        if not target_user:
+        if update.message.reply_to_message:
+            target_user = update.message.reply_to_message.from_user
+            chat_id = update.effective_chat.id
+            warn_count = self.user_warns.get(chat_id, {}).get(target_user.id, 0)
+            
+            user_data = {
+                'full_name': target_user.full_name or "User",
+                'user_id': target_user.id,
+                'username': target_user.username or "N/A"
+            }
+            
             await update.message.reply_text(
-                self.formatter.error_message("𝐑𝐞𝐩𝐥𝐲 𝐭𝐨 𝐚 𝐮𝐬𝐞𝐫'𝐬 𝐦𝐞𝐬𝐬𝐚𝐠𝐞 𝐨𝐫 𝐩𝐫𝐨𝐯𝐢𝐝𝐞 @𝐮𝐬𝐞𝐫𝐧𝐚𝐦𝐞/𝐈𝐃!")
+                self.formatter.user_info(user_data, update.effective_chat.title or "Group", update.effective_chat.id, warn_count),
+                parse_mode=ParseMode.MARKDOWN
             )
             return
         
-        chat_id = update.effective_chat.id
-        warn_count = self.user_warns.get(chat_id, {}).get(target_user.id, 0)
-        
-        user_data = {
-            'full_name': target_user.full_name,
-            'user_id': target_user.id,
-            'username': target_user.username or "N/A"
-        }
-        
         await update.message.reply_text(
-            self.formatter.user_info(user_data, update.effective_chat.title, warn_count),
-            parse_mode=ParseMode.MARKDOWN
+            self.formatter.error_message("𝐑𝐞𝐩𝐥𝐲 𝐭𝐨 𝐚 𝐮𝐬𝐞𝐫'𝐬 𝐦𝐞𝐬𝐬𝐚𝐠𝐞 𝐭𝐨 𝐬𝐞𝐞 𝐰𝐚𝐫𝐧𝐬!")
         )
     
     async def del_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -793,12 +871,39 @@ class BotHandlers:
         if update.effective_chat.type not in ["group", "supergroup"]:
             return
         
-        target_user = await self.extract_user(update, context)
+        target_user = None
+        warn_count = 0
+        chat_id = update.effective_chat.id
+        
+        # Check if replying to a message
+        if update.message.reply_to_message:
+            target_user = update.message.reply_to_message.from_user
+            warn_count = self.user_warns.get(chat_id, {}).get(target_user.id, 0)
+        
+        # Check if username provided
+        elif context.args:
+            username = context.args[0]
+            
+            if username.startswith('@'):
+                # Try to find user by username
+                target_user = await self.find_user_by_username(context, chat_id, username)
+                if target_user:
+                    warn_count = self.user_warns.get(chat_id, {}).get(target_user.id, 0)
+            
+            elif username.lstrip('-').isdigit():
+                # Try user ID
+                try:
+                    user_id = int(username)
+                    chat_member = await context.bot.get_chat_member(chat_id, user_id)
+                    target_user = chat_member.user
+                    warn_count = self.user_warns.get(chat_id, {}).get(target_user.id, 0)
+                except:
+                    pass
+        
+        # If no target found, use self
         if not target_user:
             target_user = update.effective_user
-        
-        chat_id = update.effective_chat.id
-        warn_count = self.user_warns.get(chat_id, {}).get(target_user.id, 0)
+            warn_count = self.user_warns.get(chat_id, {}).get(target_user.id, 0)
         
         user_data = {
             'full_name': target_user.full_name or "User",
@@ -807,7 +912,7 @@ class BotHandlers:
         }
         
         await update.message.reply_text(
-            self.formatter.user_info(user_data, update.effective_chat.title or "Group", warn_count),
+            self.formatter.user_info(user_data, update.effective_chat.title or "Group", chat_id, warn_count),
             parse_mode=ParseMode.MARKDOWN
         )
     
@@ -868,11 +973,13 @@ class BotHandlers:
                 'username': new_member.username or "N/A"
             }
             
+            # Get profile photo or use default
             photo_id = await self.get_user_profile_photo(context, new_member.id)
             welcome_text = self.formatter.welcome_message(user_data, chat.title or "Group")
             
             try:
                 if photo_id:
+                    # Send with user's photo
                     await context.bot.send_photo(
                         chat.id,
                         photo=photo_id,
@@ -880,9 +987,11 @@ class BotHandlers:
                         parse_mode=ParseMode.MARKDOWN
                     )
                 else:
-                    await context.bot.send_message(
+                    # Send with default profile picture
+                    await context.bot.send_photo(
                         chat.id,
-                        welcome_text,
+                        photo="https://i.imgur.com/6UxHt6U.png",  # Default avatar
+                        caption=welcome_text,
                         parse_mode=ParseMode.MARKDOWN
                     )
                 logger.info(f"Welcome message sent to {new_member.id} in {chat.id}")
@@ -986,7 +1095,7 @@ class BotHandlers:
                 'username': update.effective_user.username or "N/A"
             }
             await update.message.reply_text(
-                self.formatter.erotic_message(user_data),
+                self.formatter.private_message(user_data),
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=ReplyKeyboardMarkup(
                     [[KeyboardButton(f"🔙 {bold_unicode('Back to Dashboard')}")]],
